@@ -23,6 +23,10 @@ The system allows:
 
 The system is designed for parking facilities such as college campuses, shopping malls, and corporate offices.
 
+## Security and Quality Assurance
+
+This repository includes a dedicated security and QA review for the parking system. See [SECURITY_QUALITY_ASSURANCE.md](SECURITY_QUALITY_ASSURANCE.md) for the authentication, authorization, risk assessment, and test strategy documentation.
+
 ---
 
 ## Objectives
