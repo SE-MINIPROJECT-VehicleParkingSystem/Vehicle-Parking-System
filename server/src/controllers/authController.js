@@ -1,3 +1,15 @@
+const COOKIE_NAME = 'parking_token';
+
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 24 * 60 * 60 * 1000
+  };
+}
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
@@ -79,10 +91,64 @@ async function login(req, res, next) {
     user.failedLoginAttempts = 0;
     user.lockUntil = null;
     await user.save();
-    return sendSuccess(res, 'Login successful.', { token: createToken(user), user: safeUser(user) });
+    const token = createToken(user);
+
+    res.cookie(COOKIE_NAME, token, cookieOptions());
+
+    return sendSuccess(res, 'Login successful.', {
+      user: safeUser(user)
+    });
+      } catch (error) {
+        return next(error);
+      }
+    }
+
+
+function logout(_req, res) {
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/'
+  });
+
+  return sendSuccess(res, 'Logged out successfully.', null);
+}
+
+
+async function getCurrentUser(req, res, next) {
+  try {
+    const token = req.cookies?.parking_token;
+
+    if (!token) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+      throw new Error('JWT_SECRET must be at least 32 characters.');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.sub);
+
+    if (!user || !user.isActive) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
+    return sendSuccess(res, 'Session restored.', {
+      user: safeUser(user)
+    });
   } catch (error) {
+    if (
+      error.name === 'JsonWebTokenError' ||
+      error.name === 'TokenExpiredError' ||
+      error.name === 'NotBeforeError'
+    ) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
     return next(error);
   }
 }
 
-module.exports = { register, login };
+module.exports = { register, login, logout, getCurrentUser };

@@ -1,3 +1,5 @@
+const cookieParser = require('cookie-parser');
+
 const express=require('express');
 const cors=require('cors');
 const helmet=require('helmet');
@@ -5,7 +7,11 @@ const authRoutes=require('./routes/authRoutes');
 const {sendSuccess,sendError}=require('./utils/apiResponse');
 const app=express();
 app.use(helmet());
-app.use(cors({origin:process.env.CLIENT_ORIGIN||'http://localhost:5173'}));
+app.use(cookieParser());
+app.use(cors({
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials: true
+}));
 app.use(express.json({limit:'20kb'}));
 app.get('/api/health',(_req,res)=>sendSuccess(res,'API is running.',{service:'vehicle-parking-api'}));
 app.use('/api/auth',authRoutes);
