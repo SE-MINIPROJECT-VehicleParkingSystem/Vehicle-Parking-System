@@ -44,6 +44,11 @@ app.get('/api/health', (_req, res) => {
 // Authentication routes
 app.use('/api/auth', authRoutes);
 
+const adminRoutes = require('./routes/adminRoutes');
+
+// Add before the Route not found handler:
+app.use('/api/admin', adminRoutes);
+
 // Handle unknown routes
 app.use((_req, res) => {
   return sendError(res, 'Route not found.', 404);
