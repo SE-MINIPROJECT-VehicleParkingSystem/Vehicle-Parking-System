@@ -39,7 +39,7 @@ This repository includes a dedicated security and QA review for the parking syst
 | Vehicle entry and slot allocation (`POST /api/entries`, Staff/Admin only) | Done |
 | Staff entry form in the web client | Done |
 | Vehicle exit and fee calculation | Planned |
-| Slot availability dashboard | Planned |
+| Slot availability view (`GET /api/slots`, all logged-in roles) | Done |
 | Admin reports and pricing rules | Planned |
 
 ---
@@ -195,16 +195,17 @@ Vehicle-Parking-System/
 │   └── src/
 │       ├── main.jsx         Login, register, session, role-based screens
 │       ├── EntryForm.jsx    Staff vehicle entry form
+│       ├── SlotAvailability.jsx  Slot availability view (all roles)
 │       └── style.css
 ├── server/                  Express API
 │   ├── src/
 │   │   ├── app.js           App setup, middleware, routes
 │   │   ├── server.js        Starts the server after connecting to MongoDB
 │   │   ├── config/          Database connection
-│   │   ├── controllers/     authController, entryController
+│   │   ├── controllers/     authController, entryController, slotController
 │   │   ├── middleware/      requireAuth, requireRole
 │   │   ├── models/          User, Vehicle, ParkingSlot, ParkingTransaction
-│   │   ├── routes/          authRoutes, entryRoutes
+│   │   ├── routes/          authRoutes, entryRoutes, slotRoutes
 │   │   ├── scripts/         seed.js (Admin, Staff, parking slots)
 │   │   └── utils/           apiResponse, validators
 │   └── test/                Jest tests
@@ -296,6 +297,7 @@ npm run build
 | POST | `/api/auth/logout` | Public | Log out |
 | GET | `/api/auth/me` | Logged in | Current user |
 | POST | `/api/entries` | Staff, Admin | Record a vehicle entry |
+| GET | `/api/slots` | Logged in (any role) | Slot availability and counts |
 
 ### `POST /api/entries`
 
@@ -315,6 +317,20 @@ Success (201) returns the transaction ID, entry ticket number, number plate, veh
 | 401 | Not logged in |
 | 403 | Logged in, but not Staff or Admin |
 | 409 | The vehicle already has an active session, or no slot is free for that vehicle type |
+
+### `GET /api/slots`
+
+Optional query parameters: `zone` (for example `A`), `vehicleType` (`Two-wheeler`, `Four-wheeler`, `Other`) and `status` (`Available`, `Occupied`, `Reserved`).
+
+Success (200) returns `summary` (`total`, `available`, `occupied`, `reserved`), a `slots` array (`slotId`, `zone`, `slotNumber`, `vehicleType`, `status`) and `updatedAt`. The counts are calculated from the same stored records that are returned, so they always match the list. If no slots match, `slots` is empty and the message says so.
+
+| Status | Meaning |
+|--------|---------|
+| 400 | Invalid `zone`, `vehicleType` or `status` filter |
+| 401 | Not logged in |
+| 503 | Slot data could not be read; the client shows "Slot availability is currently unavailable" |
+
+The web client shows the slots to every logged-in user, refreshes every 10 seconds (so changes after a vehicle entry or exit appear without reloading) and has a "Refresh now" button.
 
 ---
 
