@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
 const authRoutes = require('./routes/authRoutes');
+const entryRoutes = require('./routes/entryRoutes');
 const {
   sendSuccess,
   sendError,
@@ -43,6 +44,7 @@ app.get('/api/health', (_req, res) => {
 
 // Authentication routes
 app.use('/api/auth', authRoutes);
+app.use('/api/entries', entryRoutes);
 
 // Handle unknown routes
 app.use((_req, res) => {
