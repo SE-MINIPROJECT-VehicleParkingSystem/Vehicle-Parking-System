@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -6,6 +5,7 @@ const cookieParser = require('cookie-parser');
 
 const authRoutes = require('./routes/authRoutes');
 const entryRoutes = require('./routes/entryRoutes');
+const slotRoutes = require('./routes/slotRoutes');
 const {
   sendSuccess,
   sendError,
@@ -45,6 +45,7 @@ app.get('/api/health', (_req, res) => {
 // Authentication routes
 app.use('/api/auth', authRoutes);
 app.use('/api/entries', entryRoutes);
+app.use('/api/slots', slotRoutes);
 
 // Handle unknown routes
 app.use((_req, res) => {
