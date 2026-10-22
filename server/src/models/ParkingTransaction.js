@@ -13,4 +13,10 @@ const schema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ['Cash', 'Online', null], default: null, maxlength: 10 }
 }, { timestamps: true });
 
+// Only one open session (no exit time) per plate; enforced by MongoDB, not app code.
+schema.index(
+  { vehicleNumberPlate: 1 },
+  { unique: true, partialFilterExpression: { exitTime: { $type: 'null' } } }
+);
+
 module.exports = mongoose.model('ParkingTransaction', schema);
