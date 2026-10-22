@@ -215,3 +215,21 @@ footer {
     font-size: 25px;
   }
 }
+select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #d9dcf0;
+  border-radius: 12px;
+  background: #eaedff;
+  font-size: 1rem;
+  margin-bottom: 14px;
+}
+
+.entry-panel h2 {
+  font-size: 1.1rem;
+  margin: 18px 0 8px;
+}
+
+.ticket p {
+  margin: 2px 0;
+}

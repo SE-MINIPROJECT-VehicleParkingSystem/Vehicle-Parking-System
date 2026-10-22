@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import EntryForm from './EntryForm.jsx';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
@@ -296,9 +297,13 @@ function App() {
               </p>
             )}
 
-            <p className="subtitle">
-              Authentication is complete. Parking features can be added next.
-            </p>
+            {user.role === 'Staff' || user.role === 'Admin' ? (
+              <EntryForm apiBaseUrl={API_BASE_URL} />
+            ) : (
+              <p className="subtitle">
+                Parking entry is available to gate staff only.
+              </p>
+            )}
 
             <button
               className="primary-button"

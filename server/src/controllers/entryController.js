@@ -4,12 +4,57 @@ const ParkingTransaction = require('../models/ParkingTransaction');
 const { VEHICLE_TYPES } = require('../models/Vehicle');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
 
+const MAX_ID_ATTEMPTS = 3;
+
 function normalizePlate(value) {
   return typeof value === 'string' ? value.replace(/[\s-]/g, '').toUpperCase() : '';
 }
 
-function randomHex() {
-  return crypto.randomBytes(4).toString('hex').toUpperCase();
+function randomHex(bytes) {
+  return crypto.randomBytes(bytes).toString('hex').toUpperCase();
+}
+
+// TXN-<16 hex> = 20 chars (limit 24); TKT-YYMMDD-<8 hex> = 19 chars (limit 20)
+function newIds() {
+  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+  return {
+    transactionId: `TXN-${randomHex(8)}`,
+    entryTicketNumber: `TKT-${datePart}-${randomHex(4)}`,
+  };
+}
+
+// Returns the field name that caused a MongoDB duplicate-key error, or null.
+function duplicateField(error) {
+  if (!error || error.code !== 11000) return null;
+  const keys = Object.keys(error.keyPattern || error.keyValue || {});
+  return keys[0] || 'unknown';
+}
+
+// Retries with fresh IDs only when an ID collides; any other error is rethrown.
+async function createSession(fields) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await ParkingTransaction.create({ ...newIds(), ...fields });
+    } catch (error) {
+      const field = duplicateField(error);
+      const idCollision = field === 'transactionId' || field === 'entryTicketNumber';
+      if (!idCollision || attempt >= MAX_ID_ATTEMPTS) throw error;
+    }
+  }
+}
+
+// Never throws, so the original error is not hidden by a failed release.
+async function releaseSlot(slot) {
+  try {
+    await ParkingSlot.updateOne({ _id: slot._id }, { status: 'Available' });
+    return true;
+  } catch (releaseError) {
+    console.error(
+      `CRITICAL: could not release slot ${slot.slotId}; it may be stuck as Occupied.`,
+      releaseError
+    );
+    return false;
+  }
 }
 
 async function recordEntry(req, res, next) {
@@ -25,7 +70,7 @@ async function recordEntry(req, res, next) {
       return sendError(res, `Vehicle type must be one of: ${VEHICLE_TYPES.join(', ')}.`, 400);
     }
 
-    // 2. Prevent duplicate active sessions (active = no exit time yet)
+    // 2. Fast-path duplicate check (the unique index below is the real guarantee)
     const active = await ParkingTransaction.findOne({
       vehicleNumberPlate: numberPlate,
       exitTime: null,
@@ -44,21 +89,21 @@ async function recordEntry(req, res, next) {
       return sendError(res, 'Parking full for this vehicle type.', 409);
     }
 
-    // 4. Create the active session (entryTime is set by the server)
-    const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // 4. Create the active session
     let transaction;
     try {
-      transaction = await ParkingTransaction.create({
-        transactionId: `TXN-${randomHex()}`,
-        entryTicketNumber: `TKT-${datePart}-${randomHex().slice(0, 4)}`,
+      transaction = await createSession({
         vehicleNumberPlate: numberPlate,
         vehicleType,
         slotId: slot.slotId,
         entryTime: new Date(),
       });
     } catch (error) {
-      // Give the slot back if saving the session failed
-      await ParkingSlot.updateOne({ _id: slot._id }, { status: 'Available' });
+      await releaseSlot(slot);
+      // A concurrent request for the same plate won the race
+      if (duplicateField(error) === 'vehicleNumberPlate') {
+        return sendError(res, 'This vehicle already has an active parking session.', 409);
+      }
       throw error;
     }
 
