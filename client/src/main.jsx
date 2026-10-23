@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import EntryForm from './EntryForm.jsx';
 import SlotAvailability from './SlotAvailability.jsx';
+import ExitForm from './ExitForm.jsx';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
@@ -301,10 +302,13 @@ function App() {
             <SlotAvailability apiBaseUrl={API_BASE_URL} />
 
             {user.role === 'Staff' || user.role === 'Admin' ? (
-              <EntryForm apiBaseUrl={API_BASE_URL} />
+              <>
+                <EntryForm apiBaseUrl={API_BASE_URL} />
+                <ExitForm apiBaseUrl={API_BASE_URL} />
+              </>
             ) : (
               <p className="subtitle">
-                Parking entry is available to gate staff only.
+                Parking entry and exit are available to gate staff only.
               </p>
             )}
 
