@@ -87,6 +87,7 @@ describe('POST /api/entries', () => {
     ParkingSlot.findOneAndUpdate.mockResolvedValue(null);
     const res = await request(app).post('/api/entries').set('Cookie', cookie).send(validBody);
     expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/parking full/i);
     expect(ParkingTransaction.create).not.toHaveBeenCalled();
   });
 
@@ -102,6 +103,30 @@ describe('POST /api/entries', () => {
     expect(res.body.data.slotId).toBe('A-01');
     expect(res.body.data.entryTime).toBeDefined();
     expect(ParkingTransaction.create).toHaveBeenCalledTimes(1);
+  });
+
+  test('allocates a slot of the requested vehicle type and links it to the vehicle', async () => {
+    const cookie = loginAs('Staff');
+    ParkingSlot.findOneAndUpdate.mockResolvedValue({ _id: 's2', slotId: 'A002' });
+    ParkingTransaction.create.mockImplementation(async (doc) => doc);
+
+    const res = await request(app).post('/api/entries').set('Cookie', cookie).send(validBody);
+
+    expect(res.status).toBe(201);
+
+    // Only an Available slot of the vehicle's type is claimed, and it is marked Occupied
+    const [filter, update] = ParkingSlot.findOneAndUpdate.mock.calls[0];
+    expect(filter).toEqual({ status: 'Available', vehicleType: 'Four-wheeler' });
+    expect(update).toEqual({ status: 'Occupied' });
+
+    // The session stores the plate and the allocated slot together
+    expect(ParkingTransaction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vehicleNumberPlate: 'KA01AB1234',
+        vehicleType: 'Four-wheeler',
+        slotId: 'A002',
+      })
+    );
   });
 
   test('releases the slot if saving the session fails', async () => {
