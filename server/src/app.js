@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
+const adminRoutes = require('./routes/adminRoutes');
 const authRoutes = require('./routes/authRoutes');
 const entryRoutes = require('./routes/entryRoutes');
 const exitRoutes = require('./routes/exitRoutes');
@@ -48,6 +49,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/entries', entryRoutes);
 app.use('/api/exits', exitRoutes);
 app.use('/api/slots', slotRoutes);
+
+app.use('/api/admin', adminRoutes);
 
 // Handle unknown routes
 app.use((_req, res) => {
