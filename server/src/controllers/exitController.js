@@ -111,4 +111,47 @@ async function recordExit(req, res, next) {
   }
 }
 
-module.exports = { recordExit };
+async function getReceipt(req, res, next) {
+  try {
+    const { transactionId } = req.params;
+
+    if (!transactionId || transactionId.length > 24) {
+      return sendError(res, 'Invalid transaction ID.', 400);
+    }
+
+    // Retrieve the actual saved parking transaction
+    const transaction = await ParkingTransaction.findOne({
+      transactionId,
+    }).lean();
+
+    if (!transaction) {
+      return sendError(res, 'Parking transaction not found.', 404);
+    }
+
+    // A receipt is available only after the vehicle exits
+    if (!transaction.exitTime || transaction.fee === null) {
+      return sendError(
+        res,
+        'A receipt is available only after the vehicle has exited.',
+        409
+      );
+    }
+
+    return sendSuccess(res, 'Parking receipt retrieved.', {
+      receiptNumber: transaction.entryTicketNumber,
+      transactionId: transaction.transactionId,
+      numberPlate: transaction.vehicleNumberPlate,
+      vehicleType: transaction.vehicleType,
+      slotId: transaction.slotId,
+      entryTime: transaction.entryTime,
+      exitTime: transaction.exitTime,
+      fee: transaction.fee,
+      paymentStatus: transaction.paymentStatus,
+      paymentMethod: transaction.paymentMethod,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+module.exports = { recordExit ,getReceipt, };
