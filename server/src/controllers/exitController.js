@@ -1,6 +1,7 @@
 const ParkingSlot = require('../models/ParkingSlot');
 const ParkingTransaction = require('../models/ParkingTransaction');
 const { normalizePlate, isValidPlate } = require('../utils/validators');
+const { calculateFee } = require('../utils/feeCalculator');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
 
 // Frees the slot after the session is closed. Never throws: the exit has already
@@ -13,6 +14,21 @@ async function releaseSlot(slotId) {
     console.error(
       `CRITICAL: session closed but slot ${slotId} could not be released; it may be stuck as Occupied.`,
       releaseError
+    );
+    return false;
+  }
+}
+
+// Stores the calculated fee on the closed session. Never throws: the fee is still
+// returned to staff, and a failed save is logged loudly.
+async function saveFee(transactionId, fee) {
+  try {
+    await ParkingTransaction.updateOne({ transactionId }, { fee });
+    return true;
+  } catch (saveError) {
+    console.error(
+      `CRITICAL: session ${transactionId} closed but its fee (${fee}) could not be saved.`,
+      saveError
     );
     return false;
   }
@@ -53,17 +69,25 @@ async function recordExit(req, res, next) {
       return sendError(res, 'No active parking session found for this vehicle.', 404);
     }
 
-    // 3. Release the slot (the session is already closed at this point)
+    // 3. Calculate the fee on the server from the entry and exit times (never from the client)
+    const billing = calculateFee(session.entryTime, session.exitTime, session.vehicleType);
+
+    // 4. Release the slot and store the fee (the session is already closed at this point)
     const slotReleased = await releaseSlot(session.slotId);
+    const feeRecorded = await saveFee(session.transactionId, billing.fee);
 
-    const durationMinutes = Math.max(
-      1,
-      Math.ceil((new Date(session.exitTime) - new Date(session.entryTime)) / 60000)
-    );
-
-    const message = slotReleased
-      ? 'Vehicle exit recorded. Session closed.'
-      : `Vehicle exit recorded and session closed, but slot ${session.slotId} could not be released automatically. Please ask an administrator to free it.`;
+    const warnings = [];
+    if (!slotReleased) {
+      warnings.push(
+        `Slot ${session.slotId} could not be released automatically. Please ask an administrator to free it.`
+      );
+    }
+    if (!feeRecorded) {
+      warnings.push('The fee could not be saved. Please ask an administrator to check this session.');
+    }
+    const message = warnings.length
+      ? `Vehicle exit recorded and session closed, but: ${warnings.join(' ')}`
+      : 'Vehicle exit recorded. Session closed.';
 
     return sendSuccess(res, message, {
       transactionId: session.transactionId,
@@ -73,8 +97,14 @@ async function recordExit(req, res, next) {
       slotId: session.slotId,
       entryTime: session.entryTime,
       exitTime: session.exitTime,
-      durationMinutes,
+      durationMinutes: billing.durationMinutes,
+      billedHours: billing.billedHours,
+      ratePerHour: billing.ratePerHour,
+      fee: billing.fee,
+      currency: billing.currency,
+      paymentStatus: 'Pending',
       slotReleased,
+      feeRecorded,
     });
   } catch (error) {
     return next(error);
