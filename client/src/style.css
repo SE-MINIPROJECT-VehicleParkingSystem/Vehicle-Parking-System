@@ -314,3 +314,195 @@ select {
     display: none;
   }
 }
+
+
+/* US-09: Admin Parking Management Dashboard */
+
+.admin-dashboard {
+  width: 100%;
+  margin-top: 24px;
+  color: #172033;
+}
+
+.admin-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.admin-dashboard-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.4;
+}
+
+.admin-eyebrow {
+  margin: 0 0 8px;
+  color: #2457d6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.admin-subtitle {
+  margin: 8px 0 0;
+  color: #69758b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-refresh-button {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border: 1px solid #2457d6;
+  border-radius: 9px;
+  background: #2457d6;
+  color: white;
+  font-weight: 700;
+}
+
+.admin-refresh-button:hover:not(:disabled) {
+  background: #1946b8;
+}
+
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.admin-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #e5eaf3;
+  border-radius: 12px;
+  background: #f8faff;
+}
+
+.admin-stat-card span {
+  color: #69758b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-stat-card strong {
+  color: #172033;
+  font-size: 25px;
+}
+
+.admin-stat-card.available-stat strong {
+  color: #176534;
+}
+
+.admin-stat-card.occupied-stat strong {
+  color: #a52626;
+}
+
+.admin-stat-card.reserved-stat strong {
+  color: #8a5a00;
+}
+
+.admin-secondary-stats .admin-stat-card strong {
+  font-size: 21px;
+}
+
+.admin-section {
+  margin-top: 28px;
+}
+
+.admin-section h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.admin-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e5eaf3;
+  border-radius: 10px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #e5eaf3;
+}
+
+.admin-table th {
+  background: #f0f3f9;
+  color: #526078;
+  font-weight: 750;
+}
+
+.admin-table td {
+  color: #172033;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-status.available {
+  background: #eaf8ef;
+  color: #176534;
+}
+
+.admin-status.occupied {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.admin-status.reserved {
+  background: #fff6e0;
+  color: #8a5a00;
+}
+
+.admin-empty {
+  color: #69758b;
+  font-size: 13px;
+}
+
+.admin-last-updated {
+  margin-top: 18px;
+  color: #8590a4;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .admin-dashboard-header {
+    flex-direction: column;
+  }
+
+  .admin-refresh-button {
+    width: 100%;
+  }
+
+  .admin-stat-card {
+    padding: 12px;
+  }
+
+  .admin-stat-card strong {
+    font-size: 21px;
+  }
+}

@@ -4,6 +4,7 @@ import './style.css';
 import EntryForm from './EntryForm.jsx';
 import SlotAvailability from './SlotAvailability.jsx';
 import ExitForm from './ExitForm.jsx';
+import AdminDashboard from './AdminDashboard.jsx';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
@@ -281,6 +282,7 @@ function App() {
           </div>
         )}
 
+        
         {user ? (
           <div className="signed-in">
             <p>
@@ -299,17 +301,23 @@ function App() {
               </p>
             )}
 
-            <SlotAvailability apiBaseUrl={API_BASE_URL} />
-
-            {user.role === 'Staff' || user.role === 'Admin' ? (
-              <>
-                <EntryForm apiBaseUrl={API_BASE_URL} />
-                <ExitForm apiBaseUrl={API_BASE_URL} />
-              </>
+            {user.role === 'Admin' ? (
+              <AdminDashboard apiBaseUrl={API_BASE_URL} />
             ) : (
-              <p className="subtitle">
-                Parking entry and exit are available to gate staff only.
-              </p>
+              <>
+                <SlotAvailability apiBaseUrl={API_BASE_URL} />
+
+                {user.role === 'Staff' ? (
+                  <>
+                    <EntryForm apiBaseUrl={API_BASE_URL} />
+                    <ExitForm apiBaseUrl={API_BASE_URL} />
+                  </>
+                ) : (
+                  <p className="subtitle">
+                    Parking entry and exit are available to gate staff only.
+                  </p>
+                )}
+              </>
             )}
 
             <button
@@ -322,6 +330,7 @@ function App() {
             </button>
           </div>
         ) : (
+
           <>
             <div className="tabs">
               <button
