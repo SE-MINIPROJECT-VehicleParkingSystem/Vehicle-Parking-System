@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const ParkingSlot = require('../models/ParkingSlot');
 const ParkingTransaction = require('../models/ParkingTransaction');
 const { VEHICLE_TYPES } = require('../models/Vehicle');
+const { allocateSlot } = require('../services/slotAllocator');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
 const { normalizePlate, isValidPlate } = require('../utils/validators');
 
@@ -77,11 +78,7 @@ async function recordEntry(req, res, next) {
     }
 
     // 3. Take the first available slot of this vehicle type (atomic)
-    const slot = await ParkingSlot.findOneAndUpdate(
-      { status: 'Available', vehicleType },
-      { status: 'Occupied' },
-      { sort: { zone: 1, slotNumber: 1 }, new: true }
-    );
+    const slot = await allocateSlot(vehicleType);
     if (!slot) {
       return sendError(res, 'Parking full for this vehicle type.', 409);
     }
