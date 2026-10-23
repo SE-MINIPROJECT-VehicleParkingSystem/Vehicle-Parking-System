@@ -5,6 +5,7 @@ const cookieParser = require('cookie-parser');
 
 const authRoutes = require('./routes/authRoutes');
 const entryRoutes = require('./routes/entryRoutes');
+const exitRoutes = require('./routes/exitRoutes');
 const slotRoutes = require('./routes/slotRoutes');
 const {
   sendSuccess,
@@ -45,6 +46,7 @@ app.get('/api/health', (_req, res) => {
 // Authentication routes
 app.use('/api/auth', authRoutes);
 app.use('/api/entries', entryRoutes);
+app.use('/api/exits', exitRoutes);
 app.use('/api/slots', slotRoutes);
 
 // Handle unknown routes
