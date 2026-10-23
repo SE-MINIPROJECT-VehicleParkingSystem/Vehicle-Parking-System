@@ -3,12 +3,9 @@ const ParkingSlot = require('../models/ParkingSlot');
 const ParkingTransaction = require('../models/ParkingTransaction');
 const { VEHICLE_TYPES } = require('../models/Vehicle');
 const { sendSuccess, sendError } = require('../utils/apiResponse');
+const { normalizePlate, isValidPlate } = require('../utils/validators');
 
 const MAX_ID_ATTEMPTS = 3;
-
-function normalizePlate(value) {
-  return typeof value === 'string' ? value.replace(/[\s-]/g, '').toUpperCase() : '';
-}
 
 function randomHex(bytes) {
   return crypto.randomBytes(bytes).toString('hex').toUpperCase();
@@ -63,7 +60,7 @@ async function recordEntry(req, res, next) {
     const { vehicleType } = req.body;
 
     // 1. Validate vehicle details
-    if (!/^[A-Z0-9]{4,15}$/.test(numberPlate)) {
+    if (!isValidPlate(numberPlate)) {
       return sendError(res, 'Number plate must be 4 to 15 letters or digits.', 400);
     }
     if (!VEHICLE_TYPES.includes(vehicleType)) {
