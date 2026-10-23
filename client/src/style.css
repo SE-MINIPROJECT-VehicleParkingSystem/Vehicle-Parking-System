@@ -249,3 +249,68 @@ select {
 .slot-tile.occupied { background: #fff0f0; color: #a52626; }
 .slot-tile.reserved { background: #fff6e0; color: #8a5a00; }
 .slot-footer { display: flex; justify-content: space-between; align-items: center; color: #8590a4; margin-bottom: 8px; }
+
+
+/* US-08: Parking receipt generation */
+
+.exit-panel h2 {
+  font-size: 1.1rem;
+  margin: 24px 0 8px;
+}
+
+.exit-result {
+  margin-top: 18px;
+}
+
+.exit-result h3,
+.receipt-card h3 {
+  margin-top: 0;
+}
+
+.exit-result p,
+.receipt-card p {
+  margin: 6px 0;
+}
+
+.receipt-card {
+  padding: 18px;
+  margin-top: 18px;
+  border: 1px solid #d8dfeb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card h3 {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #parking-receipt,
+  #parking-receipt * {
+    visibility: visible;
+  }
+
+  #parking-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: none;
+    box-shadow: none;
+  }
+
+  #parking-receipt button {
+    display: none;
+  }
+}
