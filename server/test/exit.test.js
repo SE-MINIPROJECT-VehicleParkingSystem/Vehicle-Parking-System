@@ -11,6 +11,7 @@ jest.mock('../src/models/ParkingSlot', () => ({
 jest.mock('../src/models/ParkingTransaction', () => ({
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn(),
+  updateOne: jest.fn(),
   create: jest.fn(),
 }));
 
@@ -49,6 +50,7 @@ describe('POST /api/exits', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     ParkingSlot.updateOne.mockResolvedValue({ modifiedCount: 1 });
+    ParkingTransaction.updateOne.mockResolvedValue({ modifiedCount: 1 });
     mockClosedLookup(null);
   });
 
@@ -96,6 +98,18 @@ describe('POST /api/exits', () => {
     expect(res.body.data.durationMinutes).toBe(90);
     expect(res.body.data.slotReleased).toBe(true);
 
+    // 90 minutes of a Four-wheeler at Rs 20/hour = 2 billed hours = Rs 40
+    expect(res.body.data.billedHours).toBe(2);
+    expect(res.body.data.ratePerHour).toBe(20);
+    expect(res.body.data.fee).toBe(40);
+    expect(res.body.data.currency).toBe('INR');
+    expect(res.body.data.paymentStatus).toBe('Pending');
+    expect(res.body.data.feeRecorded).toBe(true);
+    expect(ParkingTransaction.updateOne).toHaveBeenCalledWith(
+      { transactionId: 'TXN-0123456789ABCDEF' },
+      { fee: 40 }
+    );
+
     // Looks up only ACTIVE sessions (no exit time) and sets the exit time in the same step
     const [filter, update, options] = ParkingTransaction.findOneAndUpdate.mock.calls[0];
     expect(filter).toEqual({ vehicleNumberPlate: 'KA01AB1234', exitTime: null });
@@ -106,6 +120,23 @@ describe('POST /api/exits', () => {
       { slotId: 'A001', status: 'Occupied' },
       { status: 'Available' }
     );
+  });
+
+  test('calculates the fee from the entry and exit times, not from the request', async () => {
+    const cookie = loginAs('Staff');
+    ParkingTransaction.findOneAndUpdate.mockResolvedValue({
+      ...closedSession,
+      exitTime: new Date('2026-01-01T12:15:00.000Z'), // 2h 15m after entry
+    });
+
+    const res = await request(app)
+      .post('/api/exits')
+      .set('Cookie', cookie)
+      .send({ ...body, fee: 1, vehicleType: 'Two-wheeler' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.billedHours).toBe(3);
+    expect(res.body.data.fee).toBe(60);
   });
 
   test('allows Admin accounts too', async () => {
@@ -125,6 +156,7 @@ describe('POST /api/exits', () => {
     expect(res.status).toBe(409);
     expect(res.body.message).toMatch(/already closed/i);
     expect(ParkingSlot.updateOne).not.toHaveBeenCalled();
+    expect(ParkingTransaction.updateOne).not.toHaveBeenCalled();
   });
 
   test('returns 404 when the vehicle has no active session', async () => {
@@ -136,6 +168,7 @@ describe('POST /api/exits', () => {
     expect(res.status).toBe(404);
     expect(res.body.message).toMatch(/no active parking session/i);
     expect(ParkingSlot.updateOne).not.toHaveBeenCalled();
+    expect(ParkingTransaction.updateOne).not.toHaveBeenCalled();
   });
 
   test('still reports the exit, and logs loudly, if the slot cannot be released', async () => {
@@ -150,6 +183,24 @@ describe('POST /api/exits', () => {
     expect(res.body.data.slotReleased).toBe(false);
     expect(res.body.message).toMatch(/A001/);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('A001'), expect.any(Error));
+  });
+
+  test('still shows the fee, and logs loudly, if the fee cannot be saved', async () => {
+    const cookie = loginAs('Staff');
+    ParkingTransaction.findOneAndUpdate.mockResolvedValue(closedSession);
+    ParkingTransaction.updateOne.mockRejectedValue(new Error('save failed'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await request(app).post('/api/exits').set('Cookie', cookie).send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.fee).toBe(40);
+    expect(res.body.data.feeRecorded).toBe(false);
+    expect(res.body.message).toMatch(/fee could not be saved/i);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('TXN-0123456789ABCDEF'),
+      expect.any(Error)
+    );
   });
 
   test('returns 500 if the database fails while closing the session', async () => {
