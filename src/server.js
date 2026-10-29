@@ -5,12 +5,21 @@ import helmet from "helmet";
 import mongoose from "mongoose";
 import { pathToFileURL } from "node:url";
 import { createAuthRouter } from "./authRoutes.js";
-import { assertSecureJwtSecret, provisionAdministrator, verifyAccessToken } from "./auth.js";
+import { assertSecureJwtSecret, createRoleGuard, provisionAdministrator } from "./auth.js";
 import { createAdminRouter } from "./adminRoutes.js";
 import { createReportRouter } from "./reportRoutes.js";
+import { createParkingRouter } from "./parkingRoutes.js";
 import { ParkingSession, ParkingSlot, ParkingTransaction, PricingRule, User as UserModel } from "./models.js";
 
-export function createApp({ jwtSecret, ParkingSlot, PricingRule, ParkingSession, ParkingTransaction, User = UserModel }) {
+export function createApp({
+  jwtSecret,
+  ParkingSlot,
+  PricingRule,
+  ParkingSession,
+  ParkingTransaction,
+  User = UserModel,
+  runTransaction = (operation) => mongoose.connection.transaction(operation)
+}) {
   const app = express();
   app.disable("x-powered-by");
 
@@ -19,29 +28,10 @@ export function createApp({ jwtSecret, ParkingSlot, PricingRule, ParkingSession,
   app.use(express.json({ limit: "32kb" }));
   app.use("/api/auth", createAuthRouter({ User, jwtSecret }));
 
-  app.use("/api/admin", (request, response, next) => {
-    if (!jwtSecret) {
-      return response.status(503).json({ error: "Authentication is not configured" });
-    }
-
-    const token = request.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    if (!token) {
-      return response.status(401).json({ error: "Authentication required" });
-    }
-
-    try {
-      const user = verifyAccessToken(token, jwtSecret);
-      if (user.role !== "Administrator") {
-        return response.status(403).json({ error: "Administrator access required" });
-      }
-      next();
-    } catch {
-      response.status(401).json({ error: "Invalid authentication token" });
-    }
-  });
-
+  app.use("/api/admin", createRoleGuard(jwtSecret, ["Administrator"]));
   app.use("/api/admin", createAdminRouter({ ParkingSlot, PricingRule }));
   app.use("/api/admin", createReportRouter({ ParkingSlot, ParkingSession, ParkingTransaction }));
+  app.use("/api/staff", createParkingRouter({ jwtSecret, ParkingSlot, ParkingSession, runTransaction }));
 
   app.use((error, _request, response, _next) => {
     if (error.type === "entity.parse.failed") {
@@ -76,6 +66,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
 
   await mongoose.connect(mongoUri);
+  await Promise.all([ParkingSlot.init(), ParkingSession.init(), PricingRule.init(), ParkingTransaction.init(), UserModel.init()]);
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
     await provisionAdministrator(UserModel, {
       email: process.env.ADMIN_EMAIL,

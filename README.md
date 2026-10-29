@@ -163,7 +163,7 @@ The system follows a three-layer architecture:
 
 The repository includes an administrator workspace for parking slot and pricing configuration, plus date-filtered occupancy and revenue reports with CSV export.
 
-Requirements: Node.js 18+ and MongoDB 6+.
+Requirements: Node.js 18+ and MongoDB 6+ configured as a replica set (parking entry/exit use multi-document transactions).
 
 1. Install dependencies with `npm install`.
 2. Copy `.env.example` to `.env`, set `MONGODB_URI`, and generate `JWT_SECRET` with `openssl rand -base64 32`.
@@ -173,4 +173,4 @@ Requirements: Node.js 18+ and MongoDB 6+.
 
 Run the automated checks with `npm test` and create a production frontend bundle with `npm run build`.
 
-Public account registration creates Owner accounts only. Passwords are stored as bcrypt hashes, login tokens expire after 15 minutes, and protected settings and report routes require an Administrator role. Slot and rate changes do not rewrite completed parking records. Report totals are calculated from saved parking sessions and paid transactions.
+Public account registration creates Owner accounts only. Passwords are stored as bcrypt hashes, login tokens expire after 15 minutes, and protected settings and report routes require an Administrator role. Slot occupancy is controlled by transactional staff check-in/check-out; administrators can configure available and reserved slots but cannot manually mark a slot occupied. Report totals are calculated from saved parking sessions and paid transactions.

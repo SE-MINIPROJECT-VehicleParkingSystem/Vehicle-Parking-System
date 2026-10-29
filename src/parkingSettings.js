@@ -1,4 +1,4 @@
-const slotStatuses = new Set(["Available", "Occupied", "Reserved"]);
+const slotStatuses = new Set(["Available", "Reserved"]);
 
 function requireText(value, field, maxLength) {
   if (typeof value !== "string" || value.trim() === "") {
@@ -20,7 +20,7 @@ export function validateSlotInput(input) {
 
   const status = input.status ?? "Available";
   if (!slotStatuses.has(status)) {
-    throw new TypeError("Status must be Available, Occupied, or Reserved");
+    throw new TypeError("Status must be Available or Reserved; Occupied is controlled by active parking sessions");
   }
 
   return {
