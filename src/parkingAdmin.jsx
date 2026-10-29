@@ -257,7 +257,7 @@ export default function ParkingAdmin() {
             </div>
             <div className="form-row form-row-slot">
               <label>Vehicle type<input required maxLength="30" value={slotForm.vehicleType} onChange={(event) => setSlotForm({ ...slotForm, vehicleType: event.target.value })} placeholder="Car" /></label>
-              <label>Status<select value={slotForm.status} onChange={(event) => setSlotForm({ ...slotForm, status: event.target.value })}><option>Available</option><option>Occupied</option><option>Reserved</option></select></label>
+              <label>Status<select value={slotForm.status} onChange={(event) => setSlotForm({ ...slotForm, status: event.target.value })}><option>Available</option><option value="Occupied" disabled>Occupied (session-controlled)</option><option>Reserved</option></select></label>
             </div>
             <button type="submit" disabled={!token}>Save slot</button>
           </form>
@@ -268,7 +268,7 @@ export default function ParkingAdmin() {
                 {slots.map((slot) => <tr key={slot.slotNumber}>
                   <td className="slot-name">{slot.slotNumber}</td><td>{slot.zone}</td><td>{slot.vehicleType}</td>
                   <td><span className={`state state-${slot.status.toLowerCase()}`}>{slot.status}</span></td>
-                  <td><button className="text-button" type="button" onClick={() => editSlot(slot)}>Edit</button></td>
+                  <td><button className="text-button" type="button" disabled={slot.status === "Occupied"} title={slot.status === "Occupied" ? "Active session controls this slot" : "Edit slot"} onClick={() => editSlot(slot)}>Edit</button></td>
                 </tr>)}
                 {!slots.length && <tr><td className="empty-row" colSpan="5">{token ? "No slots configured yet." : "Connect as an administrator to view slots."}</td></tr>}
               </tbody>

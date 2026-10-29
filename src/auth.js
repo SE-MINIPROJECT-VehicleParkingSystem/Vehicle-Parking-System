@@ -77,3 +77,23 @@ export function verifyAccessToken(token, secret) {
     issuer: tokenIssuer
   });
 }
+
+export function createRoleGuard(secret, allowedRoles) {
+  return (request, response, next) => {
+    if (!secret) return response.status(503).json({ error: "Authentication is not configured" });
+
+    const token = request.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    if (!token) return response.status(401).json({ error: "Authentication required" });
+
+    try {
+      const user = verifyAccessToken(token, secret);
+      if (!allowedRoles.includes(user.role)) {
+        return response.status(403).json({ error: "This role cannot perform the requested action" });
+      }
+      request.user = user;
+      next();
+    } catch {
+      response.status(401).json({ error: "Invalid authentication token" });
+    }
+  };
+}

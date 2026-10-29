@@ -95,6 +95,7 @@ test("administrator can list and update a parking slot", async () => {
     .expect(200);
   assert.deepEqual(update.body, {
     slotNumber: "A-02",
+    activeTicket: null,
     zone: "South",
     vehicleType: "Motorcycle",
     status: "Available"
@@ -132,4 +133,22 @@ test("administrator can update a pricing rule without touching parking records",
   assert.deepEqual(response.body, { vehicleType: "Car", hourlyRate: 3.5 });
   assert.equal(updates.pricing.length, 1);
   assert.equal(updates.slots.length, 0);
+});
+
+test("administrator cannot reconfigure a slot while an active ticket owns it", async () => {
+  const app = createApp({
+    jwtSecret,
+    ParkingSlot: {
+      find: () => ({ sort: async () => [] }),
+      findOneAndUpdate: async () => null
+    },
+    PricingRule: { find: () => ({ sort: async () => [] }) }
+  });
+  const response = await request(app)
+    .put("/api/admin/slots/A-01")
+    .set("Authorization", `Bearer ${tokenFor("Administrator")}`)
+    .send({ zone: "North", vehicleType: "Car", status: "Available" })
+    .expect(409);
+
+  assert.deepEqual(response.body, { error: "An active parking slot cannot be reconfigured" });
 });
