@@ -37,6 +37,50 @@ test("admin settings endpoints require an authenticated administrator", async ()
   await request(app).get("/api/admin/slots").set("Authorization", "Bearer invalid").expect(401);
 });
 
+test("malformed JSON receives a safe client error instead of an internal error", async () => {
+  const { app } = makeTestApp();
+  const response = await request(app)
+    .put("/api/admin/slots/A-01")
+    .set("Authorization", `Bearer ${tokenFor("Administrator")}`)
+    .set("Content-Type", "application/json")
+    .send("{\"zone\":")
+    .expect(400);
+
+  assert.deepEqual(response.body, { error: "Request body must contain valid JSON" });
+});
+
+test("oversized JSON receives a safe 413 response", async () => {
+  const { app } = makeTestApp();
+  const response = await request(app)
+    .put("/api/admin/slots/A-01")
+    .set("Authorization", `Bearer ${tokenFor("Administrator")}`)
+    .send({ zone: "x".repeat(34_000) })
+    .expect(413);
+
+  assert.deepEqual(response.body, { error: "Request body is too large" });
+});
+
+test("unexpected server errors do not expose internal details", async () => {
+  const app = createApp({
+    jwtSecret,
+    ParkingSlot: { find: () => { throw new Error("private database connection detail"); } },
+    PricingRule: { find: () => ({ sort: async () => [] }) }
+  });
+  const originalError = console.error;
+  console.error = () => {};
+
+  try {
+    const response = await request(app)
+      .get("/api/admin/slots")
+      .set("Authorization", `Bearer ${tokenFor("Administrator")}`)
+      .expect(500);
+    assert.deepEqual(response.body, { error: "An unexpected error occurred" });
+    assert.doesNotMatch(JSON.stringify(response.body), /private database/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("administrator can list and update a parking slot", async () => {
   const { app, updates } = makeTestApp();
   const authorization = `Bearer ${tokenFor("Administrator")}`;

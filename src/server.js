@@ -39,6 +39,16 @@ export function createApp({ jwtSecret, ParkingSlot, PricingRule, ParkingSession,
   app.use("/api/admin", createReportRouter({ ParkingSlot, ParkingSession, ParkingTransaction }));
 
   app.use((error, _request, response, _next) => {
+    if (error.type === "entity.parse.failed") {
+      return response.status(400).json({ error: "Request body must contain valid JSON" });
+    }
+    if (error.type === "entity.too.large") {
+      return response.status(413).json({ error: "Request body is too large" });
+    }
+    if (error.code === 11000) {
+      return response.status(409).json({ error: "A record with these settings already exists" });
+    }
+
     console.error(error);
     response.status(500).json({ error: "An unexpected error occurred" });
   });
