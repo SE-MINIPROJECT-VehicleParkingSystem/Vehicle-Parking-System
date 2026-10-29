@@ -324,3 +324,17 @@ Success (201) returns the transaction ID, entry ticket number, number plate, veh
 - The backend can be hosted on Render or similar with Root Directory `server`, Build Command `npm install` and Start Command `npm start`. Set `MONGODB_URI`, `JWT_SECRET`, `NODE_ENV=production` and `CLIENT_ORIGIN` (the frontend URL, without a trailing slash).
 - If the frontend and backend are on different domains, the login cookie may not be sent on cross-site requests. Serve the API through a same-domain proxy or rewrite (for example a Vercel rewrite from `/api` to the backend), or adjust the cookie `sameSite` setting.
 - A frontend deployment shows new UI only after the branch is merged and redeployed, and new API routes work only after the backend is redeployed too.
+
+## Standalone Root Admin Workspace
+
+The repository root also contains a standalone React/Express workspace for administrator slot and pricing management, plus occupancy and revenue reports with CSV export. It is separate from the established `client/` and `server/` applications described above.
+
+Requirements: Node.js 20+ and MongoDB 6+.
+
+1. From the repository root, run `npm install`.
+2. Copy `.env.example` to `.env` and set `MONGODB_URI` and a private `JWT_SECRET`.
+3. Start the API with `npm start`, then start the UI in another terminal with `npm run dev`.
+4. Provide an Administrator access token in the workspace to manage settings and reports.
+5. Run checks with `npm test` and `npm run build`.
+
+The existing Vercel project is linked to `client/`; it does not deploy this standalone root workspace.
