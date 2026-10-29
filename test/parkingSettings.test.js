@@ -25,6 +25,18 @@ test("slot settings reject unsupported statuses", () => {
   }), /Status must be Available, Occupied, or Reserved/);
 });
 
+test("slot settings enforce field length limits", () => {
+  assert.throws(() => validateSlotInput({
+    slotNumber: "A".repeat(25),
+    zone: "North",
+    vehicleType: "Car"
+  }), /Slot number must be 24 characters or fewer/);
+  assert.throws(() => validatePricingInput({
+    vehicleType: "C".repeat(31),
+    hourlyRate: 2
+  }), /Vehicle type must be 30 characters or fewer/);
+});
+
 test("pricing requires a vehicle type and a finite non-negative rate", () => {
   assert.deepEqual(validatePricingInput({ vehicleType: "Car", hourlyRate: 2.5 }), {
     vehicleType: "Car",
