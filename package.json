@@ -1,0 +1,27 @@
+{
+  "name": "vehicle-parking-system",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "dev": "vite --host 0.0.0.0",
+    "start": "node src/server.js",
+    "build": "vite build"
+  },
+  "main": "src/server.js",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^4.22.3",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.24.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "supertest": "^7.3.1",
+    "vite": "^6.4.5"
+  }
+}

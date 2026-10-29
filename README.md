@@ -157,3 +157,20 @@ The system follows a three-layer architecture:
 | Parking Slots               |
 | Transactions                |
 +-----------------------------+
+```
+
+## Local Development
+
+The repository includes an initial administrator workspace for parking slot and pricing configuration.
+
+Requirements: Node.js 18+ and MongoDB 6+.
+
+1. Install dependencies with `npm install`.
+2. Copy `.env.example` to `.env` and set `MONGODB_URI` and a private `JWT_SECRET`.
+3. Start the API with `npm start`.
+4. In another terminal, start the frontend with `npm run dev` and open the URL printed by Vite.
+5. Provide an Administrator access token issued by the application's authentication service to load and change settings.
+
+Run the automated checks with `npm test` and create a production frontend bundle with `npm run build`.
+
+Slot and rate changes are restricted to authenticated Administrator tokens. Pricing settings are stored separately from parking sessions, so updating a rate does not rewrite completed parking records.
