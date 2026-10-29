@@ -5,9 +5,10 @@ import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { pathToFileURL } from "node:url";
 import { createAdminRouter } from "./adminRoutes.js";
-import { ParkingSlot, PricingRule } from "./models.js";
+import { createReportRouter } from "./reportRoutes.js";
+import { ParkingSession, ParkingSlot, ParkingTransaction, PricingRule } from "./models.js";
 
-export function createApp({ jwtSecret, ParkingSlot, PricingRule }) {
+export function createApp({ jwtSecret, ParkingSlot, PricingRule, ParkingSession, ParkingTransaction }) {
   const app = express();
 
   app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
@@ -35,6 +36,7 @@ export function createApp({ jwtSecret, ParkingSlot, PricingRule }) {
   });
 
   app.use("/api/admin", createAdminRouter({ ParkingSlot, PricingRule }));
+  app.use("/api/admin", createReportRouter({ ParkingSlot, ParkingSession, ParkingTransaction }));
 
   app.use((error, _request, response, _next) => {
     console.error(error);
@@ -54,6 +56,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
 
   await mongoose.connect(mongoUri);
-  const app = createApp({ jwtSecret, ParkingSlot, PricingRule });
+  const app = createApp({ jwtSecret, ParkingSlot, PricingRule, ParkingSession, ParkingTransaction });
   app.listen(port, () => console.log(`Parking API listening on port ${port}`));
 }
