@@ -1,11 +1,16 @@
 const slotStatuses = new Set(["Available", "Occupied", "Reserved"]);
 
-function requireText(value, field) {
+function requireText(value, field, maxLength) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new TypeError(`${field} is required`);
   }
 
-  return value.trim();
+  const text = value.trim();
+  if (text.length > maxLength) {
+    throw new TypeError(`${field} must be ${maxLength} characters or fewer`);
+  }
+
+  return text;
 }
 
 export function validateSlotInput(input) {
@@ -19,9 +24,9 @@ export function validateSlotInput(input) {
   }
 
   return {
-    slotNumber: requireText(input.slotNumber, "Slot number"),
-    zone: requireText(input.zone, "Zone"),
-    vehicleType: requireText(input.vehicleType, "Vehicle type"),
+    slotNumber: requireText(input.slotNumber, "Slot number", 24),
+    zone: requireText(input.zone, "Zone", 40),
+    vehicleType: requireText(input.vehicleType, "Vehicle type", 30),
     status
   };
 }
@@ -37,7 +42,7 @@ export function validatePricingInput(input) {
   }
 
   return {
-    vehicleType: requireText(input.vehicleType, "Vehicle type"),
+    vehicleType: requireText(input.vehicleType, "Vehicle type", 30),
     hourlyRate
   };
 }

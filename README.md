@@ -161,7 +161,7 @@ The system follows a three-layer architecture:
 
 ## Local Development
 
-The repository includes an initial administrator workspace for parking slot and pricing configuration.
+The repository includes an administrator workspace for parking slot and pricing configuration, plus date-filtered occupancy and revenue reports with CSV export.
 
 Requirements: Node.js 18+ and MongoDB 6+.
 
@@ -173,4 +173,4 @@ Requirements: Node.js 18+ and MongoDB 6+.
 
 Run the automated checks with `npm test` and create a production frontend bundle with `npm run build`.
 
-Slot and rate changes are restricted to authenticated Administrator tokens. Pricing settings are stored separately from parking sessions, so updating a rate does not rewrite completed parking records.
+Slot and rate changes and report access are restricted to authenticated Administrator tokens. Pricing settings are stored separately from parking sessions, so updating a rate does not rewrite completed parking records. Report totals are calculated from saved parking sessions and paid transactions.

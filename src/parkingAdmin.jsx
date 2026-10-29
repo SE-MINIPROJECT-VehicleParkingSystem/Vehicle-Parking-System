@@ -22,9 +22,12 @@ export default function ParkingAdmin() {
   const [pricing, setPricing] = useState([]);
   const [slotForm, setSlotForm] = useState(emptySlot);
   const [rateForm, setRateForm] = useState({ vehicleType: "Car", hourlyRate: "" });
+  const [reportRange, setReportRange] = useState({ from: "", to: "" });
+  const [report, setReport] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
 
   async function refresh() {
     if (!token) {
@@ -49,8 +52,51 @@ export default function ParkingAdmin() {
     }
   }
 
+  async function loadReport() {
+    if (!token) {
+      setReport(null);
+      return;
+    }
+
+    setReportLoading(true);
+    setError("");
+    const query = new URLSearchParams(Object.entries(reportRange).filter(([, value]) => value));
+    try {
+      setReport(await apiRequest(`/reports${query.size ? `?${query}` : ""}`, token));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+  async function downloadReport() {
+    setError("");
+    const query = new URLSearchParams(Object.entries(reportRange).filter(([, value]) => value));
+    try {
+      const response = await fetch(`/api/admin/reports.csv${query.size ? `?${query}` : ""}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `Request failed (${response.status})`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "parking-report.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   useEffect(() => {
-    const timer = window.setTimeout(refresh, 250);
+    const timer = window.setTimeout(() => {
+      refresh();
+      loadReport();
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [token]);
 
@@ -142,6 +188,26 @@ export default function ParkingAdmin() {
       </section>
 
       {(error || message) && <div className={`notice ${error ? "notice-error" : "notice-success"}`} role="status">{error || message}</div>}
+
+      <section className="report-section" aria-labelledby="report-heading">
+        <div className="report-heading">
+          <div className="section-heading">
+            <div><p className="eyebrow">PERFORMANCE</p><h2 id="report-heading">Occupancy &amp; revenue</h2></div>
+            <span className="section-count">{reportLoading ? "UPDATING" : report ? "SAVED RECORDS" : "ADMIN REPORT"}</span>
+          </div>
+          <div className="report-actions">
+            <label>From<input type="date" value={reportRange.from} onChange={(event) => setReportRange({ ...reportRange, from: event.target.value })} /></label>
+            <label>To<input type="date" value={reportRange.to} onChange={(event) => setReportRange({ ...reportRange, to: event.target.value })} /></label>
+            <button type="button" className="report-button" disabled={!token || reportLoading} onClick={loadReport}>Run report</button>
+            <button type="button" className="export-button" disabled={!token} onClick={downloadReport} aria-label="Export report as CSV">↓ <span>CSV</span></button>
+          </div>
+        </div>
+        <div className="report-metrics">
+          <div><span>CURRENT OCCUPANCY</span><strong>{report ? `${report.occupancy.occupied} <small>/ ${slots.length}</small>` : "--"}</strong><em>{report ? `${report.occupancy.available} available · ${report.occupancy.reserved} reserved` : "Connect to load"}</em></div>
+          <div><span>COMPLETED SESSIONS</span><strong>{report?.completedSessions.toLocaleString() ?? "--"}</strong><em>{report?.period.from || report?.period.to ? `${report.period.from || "All dates"} – ${report.period.to || "Today"}` : "All saved dates"}</em></div>
+          <div><span>PAID REVENUE</span><strong>{report ? report.revenue.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--"}</strong><em>{report ? `${report.revenue.transactionCount} paid transactions` : "Connect to load"}</em></div>
+        </div>
+      </section>
 
       <div className="management-grid">
         <section className="panel" aria-labelledby="slots-heading">
