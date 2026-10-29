@@ -166,11 +166,11 @@ The repository includes an administrator workspace for parking slot and pricing 
 Requirements: Node.js 18+ and MongoDB 6+.
 
 1. Install dependencies with `npm install`.
-2. Copy `.env.example` to `.env` and set `MONGODB_URI` and a private `JWT_SECRET`.
-3. Start the API with `npm start`.
-4. In another terminal, start the frontend with `npm run dev` and open the URL printed by Vite.
-5. Provide an Administrator access token issued by the application's authentication service to load and change settings.
+2. Copy `.env.example` to `.env`, set `MONGODB_URI`, and generate `JWT_SECRET` with `openssl rand -base64 32`.
+3. Optionally set `ADMIN_EMAIL` and a 12-character-minimum `ADMIN_PASSWORD` to create the initial administrator account on startup.
+4. Start the API with `npm start`.
+5. In another terminal, start the frontend with `npm run dev` and open the URL printed by Vite, then sign in with the administrator account.
 
 Run the automated checks with `npm test` and create a production frontend bundle with `npm run build`.
 
-Slot and rate changes and report access are restricted to authenticated Administrator tokens. Pricing settings are stored separately from parking sessions, so updating a rate does not rewrite completed parking records. Report totals are calculated from saved parking sessions and paid transactions.
+Public account registration creates Owner accounts only. Passwords are stored as bcrypt hashes, login tokens expire after 15 minutes, and protected settings and report routes require an Administrator role. Slot and rate changes do not rewrite completed parking records. Report totals are calculated from saved parking sessions and paid transactions.

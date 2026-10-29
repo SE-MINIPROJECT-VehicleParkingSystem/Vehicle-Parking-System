@@ -28,7 +28,15 @@ const parkingTransactionSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ["Cash", "Online"], required: true }
 }, { timestamps: true });
 
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 80 },
+  email: { type: String, required: true, trim: true, lowercase: true, unique: true, maxlength: 254 },
+  passwordHash: { type: String, required: true, select: false },
+  role: { type: String, enum: ["Owner", "Gate Staff", "Administrator"], required: true, default: "Owner" }
+}, { timestamps: true });
+
 export const ParkingSlot = mongoose.models.ParkingSlot || mongoose.model("ParkingSlot", parkingSlotSchema);
 export const PricingRule = mongoose.models.PricingRule || mongoose.model("PricingRule", pricingRuleSchema);
 export const ParkingSession = mongoose.models.ParkingSession || mongoose.model("ParkingSession", parkingSessionSchema);
 export const ParkingTransaction = mongoose.models.ParkingTransaction || mongoose.model("ParkingTransaction", parkingTransactionSchema);
+export const User = mongoose.models.User || mongoose.model("User", userSchema);

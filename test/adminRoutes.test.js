@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import jwt from "jsonwebtoken";
 import request from "supertest";
+import { signAccessToken } from "../src/auth.js";
 import { createApp } from "../src/server.js";
 
 const jwtSecret = "unit-test-secret";
@@ -27,7 +27,7 @@ function makeTestApp() {
 }
 
 function tokenFor(role) {
-  return jwt.sign({ role }, jwtSecret);
+  return signAccessToken({ _id: "test-user", role }, jwtSecret);
 }
 
 test("admin settings endpoints require an authenticated administrator", async () => {
