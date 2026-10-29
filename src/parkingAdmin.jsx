@@ -18,6 +18,8 @@ async function apiRequest(path, token, options = {}) {
 
 export default function ParkingAdmin() {
   const [token, setToken] = useState("");
+  const [credentials, setCredentials] = useState({ email: "", password: "" });
+  const [adminName, setAdminName] = useState("");
   const [slots, setSlots] = useState([]);
   const [pricing, setPricing] = useState([]);
   const [slotForm, setSlotForm] = useState(emptySlot);
@@ -28,6 +30,7 @@ export default function ParkingAdmin() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
 
   async function refresh() {
     if (!token) {
@@ -90,6 +93,37 @@ export default function ParkingAdmin() {
     } catch (requestError) {
       setError(requestError.message);
     }
+  }
+
+  async function signIn(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials)
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+      if (body.user.role !== "Administrator") throw new Error("Administrator access required");
+      setToken(body.accessToken);
+      setAdminName(body.user.name);
+      setCredentials((current) => ({ ...current, password: "" }));
+      setMessage(`Signed in as ${body.user.name}.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  function signOut() {
+    setToken("");
+    setAdminName("");
+    setMessage("Signed out.");
   }
 
   useEffect(() => {
@@ -167,24 +201,25 @@ export default function ParkingAdmin() {
           <h1>Slots &amp; rates</h1>
           <p className="intro-copy">Keep the floor plan and pricing rules current.</p>
         </div>
-        <div className="connection">
-          <label htmlFor="admin-token">Administrator token</label>
-          <input
-            id="admin-token"
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="Paste access token"
-            autoComplete="off"
-          />
-        </div>
+        <form className="connection" onSubmit={signIn}>
+          {token ? <>
+            <label className="signed-in-label">Signed in as <strong>{adminName}</strong></label>
+            <button type="button" className="sign-out-button" onClick={signOut}>Sign out</button>
+          </> : <>
+            <label htmlFor="admin-email">Administrator email</label>
+            <input id="admin-email" type="email" required autoComplete="username" value={credentials.email} onChange={(event) => setCredentials({ ...credentials, email: event.target.value })} placeholder="name@example.com" />
+            <label htmlFor="admin-password">Password</label>
+            <input id="admin-password" type="password" required autoComplete="current-password" value={credentials.password} onChange={(event) => setCredentials({ ...credentials, password: event.target.value })} placeholder="Password" />
+            <button type="submit" disabled={loginLoading}>{loginLoading ? "Signing in" : "Sign in"}</button>
+          </>}
+        </form>
       </section>
 
       <section className="summary" aria-label="Parking summary">
         <div className="summary-item"><span>REGISTERED SLOTS</span><strong>{slots.length.toString().padStart(2, "0")}</strong></div>
         <div className="summary-item"><span>AVAILABLE</span><strong>{slots.filter((slot) => slot.status === "Available").length.toString().padStart(2, "0")}</strong></div>
         <div className="summary-item"><span>RATE PLANS</span><strong>{pricing.length.toString().padStart(2, "0")}</strong></div>
-        <div className="summary-note">{loading ? "Syncing settings" : token ? "Connected to facility data" : "Awaiting administrator access"}</div>
+        <div className="summary-note">{loading ? "Syncing settings" : token ? "Connected to facility data" : "Administrator sign-in required"}</div>
       </section>
 
       {(error || message) && <div className={`notice ${error ? "notice-error" : "notice-success"}`} role="status">{error || message}</div>}
@@ -222,7 +257,7 @@ export default function ParkingAdmin() {
             </div>
             <div className="form-row form-row-slot">
               <label>Vehicle type<input required maxLength="30" value={slotForm.vehicleType} onChange={(event) => setSlotForm({ ...slotForm, vehicleType: event.target.value })} placeholder="Car" /></label>
-              <label>Status<select value={slotForm.status} onChange={(event) => setSlotForm({ ...slotForm, status: event.target.value })}><option>Available</option><option>Occupied</option><option>Reserved</option></select></label>
+              <label>Status<select value={slotForm.status} onChange={(event) => setSlotForm({ ...slotForm, status: event.target.value })}><option>Available</option><option value="Occupied" disabled>Occupied (session-controlled)</option><option>Reserved</option></select></label>
             </div>
             <button type="submit" disabled={!token}>Save slot</button>
           </form>
@@ -233,7 +268,7 @@ export default function ParkingAdmin() {
                 {slots.map((slot) => <tr key={slot.slotNumber}>
                   <td className="slot-name">{slot.slotNumber}</td><td>{slot.zone}</td><td>{slot.vehicleType}</td>
                   <td><span className={`state state-${slot.status.toLowerCase()}`}>{slot.status}</span></td>
-                  <td><button className="text-button" type="button" onClick={() => editSlot(slot)}>Edit</button></td>
+                  <td><button className="text-button" type="button" disabled={slot.status === "Occupied"} title={slot.status === "Occupied" ? "Active session controls this slot" : "Edit slot"} onClick={() => editSlot(slot)}>Edit</button></td>
                 </tr>)}
                 {!slots.length && <tr><td className="empty-row" colSpan="5">{token ? "No slots configured yet." : "Connect as an administrator to view slots."}</td></tr>}
               </tbody>
