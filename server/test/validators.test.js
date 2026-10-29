@@ -1,0 +1,6 @@
+const {normalizeEmail,isValidEmail,isStrongEnoughPassword,normalizePlate,isValidPlate}=require('../src/utils/validators');
+test('normalizes email',()=>expect(normalizeEmail(' OWNER@Example.com ')).toBe('owner@example.com'));
+test('validates email',()=>{expect(isValidEmail('owner@example.com')).toBe(true);expect(isValidEmail('bad')).toBe(false);});
+test('checks password length',()=>{expect(isStrongEnoughPassword('Password123!')).toBe(true);expect(isStrongEnoughPassword('short')).toBe(false);expect(isStrongEnoughPassword('x'.repeat(129))).toBe(false);});
+test('normalizes number plates',()=>{expect(normalizePlate(' ka01 ab-1234 ')).toBe('KA01AB1234');expect(normalizePlate(undefined)).toBe('');expect(normalizePlate({$ne:''})).toBe('');});
+test('validates number plates',()=>{expect(isValidPlate('KA01AB1234')).toBe(true);expect(isValidPlate('A')).toBe(false);expect(isValidPlate('')).toBe(false);expect(isValidPlate('KA01AB1234567890')).toBe(false);expect(isValidPlate('KA01!AB')).toBe(false);});
