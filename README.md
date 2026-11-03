@@ -188,7 +188,6 @@ The system follows a three-layer architecture:
 ---
 
 ## Project Structure
-
 ```text
 Vehicle-Parking-System/
 ├── client/                  React frontend (Vite)
@@ -329,12 +328,16 @@ Success (201) returns the transaction ID, entry ticket number, number plate, veh
 
 The repository root also contains a standalone React/Express workspace for administrator slot and pricing management, plus occupancy and revenue reports with CSV export. It is separate from the established `client/` and `server/` applications described above.
 
-Requirements: Node.js 20+ and MongoDB 6+.
+Requirements: Node.js 18+ and MongoDB 6+ configured as a replica set (parking entry/exit use multi-document transactions).
 
-1. From the repository root, run `npm install`.
-2. Copy `.env.example` to `.env` and set `MONGODB_URI` and a private `JWT_SECRET`.
-3. Start the API with `npm start`, then start the UI in another terminal with `npm run dev`.
-4. Provide an Administrator access token in the workspace to manage settings and reports.
-5. Run checks with `npm test` and `npm run build`.
+1. Install dependencies with `npm install`.
+2. Copy `.env.example` to `.env`, set `MONGODB_URI`, and generate `JWT_SECRET` with `openssl rand -base64 32`.
+3. Optionally set `ADMIN_EMAIL` and a 12-character-minimum `ADMIN_PASSWORD` to create the initial administrator account on startup.
+4. Start the API with `npm start`.
+5. In another terminal, start the frontend with `npm run dev` and open the URL printed by Vite, then sign in with the administrator account.
+
+Run the automated checks with `npm test` and create a production frontend bundle with `npm run build`.
+
+Public account registration creates Owner accounts only. Passwords are stored as bcrypt hashes, login tokens expire after 15 minutes, and protected settings and report routes require an Administrator role. Slot occupancy is controlled by transactional staff check-in/check-out; administrators can configure available and reserved slots but cannot manually mark a slot occupied. Report totals are calculated from saved parking sessions and paid transactions.
 
 The existing Vercel project is linked to `client/`; it does not deploy this standalone root workspace.

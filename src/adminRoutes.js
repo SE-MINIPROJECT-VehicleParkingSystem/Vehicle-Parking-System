@@ -16,12 +16,18 @@ export function createAdminRouter({ ParkingSlot, PricingRule }) {
     try {
       const slot = validateSlotInput({ ...request.body, slotNumber: request.params.slotNumber });
       const updated = await ParkingSlot.findOneAndUpdate(
-        { slotNumber: slot.slotNumber },
+        { slotNumber: slot.slotNumber, activeTicket: null },
         { $set: slot },
         { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
       );
+      if (!updated) {
+        return response.status(409).json({ error: "An active parking slot cannot be reconfigured" });
+      }
       response.json(updated);
     } catch (error) {
+      if (error.code === 11000) {
+        return response.status(409).json({ error: "An active parking slot cannot be reconfigured" });
+      }
       if (error instanceof TypeError || error.name === "ValidationError") {
         return response.status(400).json({ error: error.message });
       }

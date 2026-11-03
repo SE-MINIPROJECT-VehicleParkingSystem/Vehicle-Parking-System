@@ -22,7 +22,13 @@ test("slot settings reject unsupported statuses", () => {
     zone: "North",
     vehicleType: "Car",
     status: "Unknown"
-  }), /Status must be Available, Occupied, or Reserved/);
+  }), /Status must be Available or Reserved/);
+  assert.throws(() => validateSlotInput({
+    slotNumber: "A-01",
+    zone: "North",
+    vehicleType: "Car",
+    status: "Occupied"
+  }), /Occupied is controlled by active parking sessions/);
 });
 
 test("slot settings enforce field length limits", () => {
