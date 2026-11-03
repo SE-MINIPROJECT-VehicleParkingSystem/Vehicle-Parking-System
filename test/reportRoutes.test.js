@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import jwt from "jsonwebtoken";
 import request from "supertest";
+import { signAccessToken } from "../src/auth.js";
 import { createApp } from "../src/server.js";
 
 const jwtSecret = "report-test-secret";
@@ -20,7 +20,7 @@ function makeReportApp() {
   });
 }
 
-const authorization = `Bearer ${jwt.sign({ role: "Administrator" }, jwtSecret)}`;
+const authorization = `Bearer ${signAccessToken({ _id: "report-user", role: "Administrator" }, jwtSecret)}`;
 
 test("report JSON endpoint returns aggregated operational totals", async () => {
   const response = await request(makeReportApp())
