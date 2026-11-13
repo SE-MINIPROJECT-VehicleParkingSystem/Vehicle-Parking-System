@@ -15,8 +15,15 @@ const API_URL = `${API_BASE_URL}/auth`;
 const HEALTH_URL = `${API_BASE_URL}/health`;
 
 function App() {
-  const [mode, setMode] = useState('login');
+  const resetToken = new URLSearchParams(window.location.search).get('token');
+
+  const [mode, setMode] = useState(
+    resetToken ? 'reset' : 'login'
+  );
+
   const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const [form, setForm] = useState({
     name: '',
@@ -88,65 +95,47 @@ function App() {
   function switchMode(nextMode) {
     setMode(nextMode);
     setShowPassword(false);
+    setPassword('');
+    setConfirmPassword('');
     setMessage('');
     setError('');
-  }
-
-  function validateForm() {
-    const email = form.email.trim();
-    const password = form.password;
-
-    if (mode === 'register') {
-      const name = form.name.trim();
-      const contactNumber = form.contactNumber.trim();
-
-      if (name.length < 2 || name.length > 50) {
-        return 'Name must contain between 2 and 50 characters.';
-      }
-
-      if (!contactNumber || contactNumber.length > 15) {
-        return 'Enter a valid contact number (maximum 15 characters).';
-      }
-    }
-
-    if (!email) {
-      return 'Please enter your email address.';
-    }
-
-    if (email.length > 100 ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return 'Please enter a valid email address.';
-    }
-
-    if (!password) {
-      return 'Please enter your password.';
-    }
-
-    if (mode === 'register' &&
-        (password.length < 8 || password.length > 128)) {
-      return 'Password must contain between 8 and 128 characters.';
-    }
-
-    return '';
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
-
     setMessage('');
     setError('');
 
-    const validationError = validateForm();
+    const isRegister = mode === 'register';
 
-    if (validationError) {
-      setError(validationError);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    if (isRegister) {
+      if (form.name.trim().length < 2 || form.name.trim().length > 50) {
+        setError('Name must contain 2 to 50 characters.');
+        return;
+      }
+
+      if (!form.contactNumber.trim() || form.contactNumber.trim().length > 15) {
+        setError('Enter a valid contact number.');
+        return;
+      }
+    }
+
+    if (
+      typeof form.password !== 'string' ||
+      (isRegister && (form.password.length < 8 || form.password.length > 128))
+    ) {
+      setError('Password must contain between 8 and 128 characters.');
       return;
     }
 
     setLoading(true);
 
     try {
-      const isRegister = mode === 'register';
       const endpoint = isRegister ? 'register' : 'login';
 
       const payload = isRegister
@@ -173,14 +162,7 @@ function App() {
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(
-          result.message ||
-          (response.status === 401
-            ? 'Invalid email or password.'
-            : response.status === 423
-              ? 'Your account is temporarily locked. Try again later.'
-              : 'The request failed. Please try again.')
-        );
+        throw new Error(result.message || 'The request failed.');
       }
 
       const data = result.data ?? result;
@@ -198,7 +180,6 @@ function App() {
         });
 
         setMode('login');
-        setShowPassword(false);
       } else {
         if (!data.user) {
           throw new Error(
@@ -213,14 +194,121 @@ function App() {
           password: '',
         }));
 
-        setShowPassword(false);
         setMessage('You have logged in successfully.');
       }
     } catch (err) {
       setError(
         err instanceof TypeError
-          ? 'Cannot connect to the server. Check that the backend is running.'
-          : err.message || 'Something went wrong. Please try again.'
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Something went wrong.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword(event) {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Could not process your request.');
+      }
+
+      setMessage(
+        result.message ||
+        'If an account exists with this email, a reset link will be sent.'
+      );
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Something went wrong.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResetPassword(event) {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+
+    if (!resetToken) {
+      setError('Password reset link is missing. Request a new link.');
+      return;
+    }
+
+    if (password.length < 8 || password.length > 128) {
+      setError('Password must contain between 8 and 128 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: resetToken,
+          password,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Password reset failed.');
+      }
+
+      setPassword('');
+      setConfirmPassword('');
+      setForm((previous) => ({
+        ...previous,
+        password: '',
+      }));
+
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      setMode('login');
+      setMessage(
+        result.message || 'Password reset successful. You can now log in.'
+      );
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Password reset failed.'
       );
     } finally {
       setLoading(false);
@@ -254,7 +342,6 @@ function App() {
       });
 
       setMode('login');
-      setShowPassword(false);
       setMessage('You have been logged out.');
     } catch (err) {
       setError(
@@ -318,17 +405,25 @@ function App() {
         <h1>
           {user
             ? 'Welcome!'
-            : mode === 'login'
-              ? 'Welcome back'
-              : 'Create your account'}
+            : mode === 'forgot'
+              ? 'Forgot password?'
+              : mode === 'reset'
+                ? 'Reset password'
+                : mode === 'login'
+                  ? 'Welcome back'
+                  : 'Create your account'}
         </h1>
 
         <p className="subtitle">
           {user
             ? 'You are signed in.'
-            : mode === 'login'
-              ? 'Sign in to continue to your parking account.'
-              : 'Register to get started with hassle-free parking.'}
+            : mode === 'forgot'
+              ? 'Enter your registered email address. We will send you a reset link.'
+              : mode === 'reset'
+                ? 'Choose a new password for your account.'
+                : mode === 'login'
+                  ? 'Sign in to continue to your parking account.'
+                  : 'Register to get started with hassle-free parking.'}
         </p>
 
         {message && (
@@ -389,6 +484,94 @@ function App() {
               {loading ? 'Please wait...' : 'Log out'}
             </button>
           </div>
+        ) : mode === 'forgot' ? (
+          <>
+            <form onSubmit={handleForgotPassword}>
+              <label htmlFor="forgotEmail">Email address</label>
+              <input
+                id="forgotEmail"
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm((previous) => ({
+                    ...previous,
+                    email: event.target.value,
+                  }))
+                }
+                placeholder="you@example.com"
+                autoComplete="email"
+                maxLength={100}
+                required
+              />
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={loading}
+              >
+                {loading ? 'Sending...' : 'Send reset link'}
+              </button>
+            </form>
+
+            <p className="switch-copy">
+              Remember your password?{' '}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => switchMode('login')}
+              >
+                Back to login
+              </button>
+            </p>
+          </>
+        ) : mode === 'reset' ? (
+          <>
+            <form onSubmit={handleResetPassword}>
+              <label htmlFor="newPassword">New password</label>
+              <input
+                id="newPassword"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter new password"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={128}
+                required
+              />
+
+              <label htmlFor="confirmPassword">Confirm password</label>
+              <input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder="Confirm new password"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={128}
+                required
+              />
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={loading}
+              >
+                {loading ? 'Resetting...' : 'Reset password'}
+              </button>
+            </form>
+
+            <p className="switch-copy">
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => switchMode('login')}
+              >
+                Back to login
+              </button>
+            </p>
+          </>
         ) : (
           <>
             <div className="tabs">
@@ -409,7 +592,7 @@ function App() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} noValidate>
+            <form onSubmit={handleSubmit}>
               {mode === 'register' && (
                 <>
                   <label htmlFor="name">Full name</label>
@@ -491,11 +674,22 @@ function App() {
               </button>
             </form>
 
+            {mode === 'login' && (
+              <p className="switch-copy">
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => switchMode('forgot')}
+                >
+                  Forgot password?
+                </button>
+              </p>
+            )}
+
             <p className="switch-copy">
               {mode === 'login'
                 ? "Don't have an account?"
                 : 'Already have an account?'}{' '}
-
               <button
                 className="text-button"
                 type="button"
