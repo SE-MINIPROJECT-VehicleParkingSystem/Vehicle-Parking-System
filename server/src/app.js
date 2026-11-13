@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -8,6 +9,7 @@ const authRoutes = require('./routes/authRoutes');
 const entryRoutes = require('./routes/entryRoutes');
 const exitRoutes = require('./routes/exitRoutes');
 const slotRoutes = require('./routes/slotRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
 const {
   sendSuccess,
   sendError,
@@ -89,3 +91,4 @@ app.use((err, _req, res, _next) => {
 });
 
 module.exports = app;
+
