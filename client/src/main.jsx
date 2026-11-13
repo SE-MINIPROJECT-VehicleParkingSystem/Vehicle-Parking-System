@@ -82,6 +82,8 @@ function App() {
       ...previous,
       [name]: value,
     }));
+
+    setError('');
   }
 
   function switchMode(nextMode) {
@@ -90,10 +92,57 @@ function App() {
     setError('');
   }
 
+  function validateForm() {
+    const email = form.email.trim();
+    const password = form.password;
+
+    if (mode === 'register') {
+      const name = form.name.trim();
+      const contactNumber = form.contactNumber.trim();
+
+      if (name.length < 2 || name.length > 50) {
+        return 'Name must contain between 2 and 50 characters.';
+      }
+
+      if (!contactNumber || contactNumber.length > 15) {
+        return 'Enter a valid contact number (maximum 15 characters).';
+      }
+    }
+
+    if (!email) {
+      return 'Please enter your email address.';
+    }
+
+    if (email.length > 100 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return 'Please enter a valid email address.';
+    }
+
+    if (!password) {
+      return 'Please enter your password.';
+    }
+
+    if (mode === 'register' &&
+        (password.length < 8 || password.length > 128)) {
+      return 'Password must contain between 8 and 128 characters.';
+    }
+
+    return '';
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
+
     setMessage('');
     setError('');
+
+    const validationError = validateForm();
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -121,10 +170,17 @@ function App() {
         body: JSON.stringify(payload),
       });
 
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.message || 'The request failed.');
+        throw new Error(
+          result.message ||
+          (response.status === 401
+            ? 'Invalid email or password.'
+            : response.status === 423
+              ? 'Your account is temporarily locked. Try again later.'
+              : 'The request failed. Please try again.')
+        );
       }
 
       const data = result.data ?? result;
@@ -161,8 +217,8 @@ function App() {
     } catch (err) {
       setError(
         err instanceof TypeError
-          ? 'Cannot reach the API. Check that the backend is running and the API URL is correct.'
-          : err.message || 'Something went wrong.'
+          ? 'Cannot connect to the server. Check that the backend is running.'
+          : err.message || 'Something went wrong. Please try again.'
       );
     } finally {
       setLoading(false);
@@ -350,7 +406,7 @@ function App() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               {mode === 'register' && (
                 <>
                   <label htmlFor="name">Full name</label>
