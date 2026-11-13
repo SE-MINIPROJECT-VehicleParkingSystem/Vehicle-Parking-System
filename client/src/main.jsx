@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -15,6 +16,7 @@ const HEALTH_URL = `${API_BASE_URL}/health`;
 
 function App() {
   const [mode, setMode] = useState('login');
+  const [showPassword, setShowPassword] = useState(false);
 
   const [form, setForm] = useState({
     name: '',
@@ -27,11 +29,8 @@ function App() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
-
   const [user, setUser] = useState(null);
 
-  // Restore the session using the HTTP-only cookie.
-  // The browser sends the cookie automatically; JavaScript cannot read it.
   useEffect(() => {
     let cancelled = false;
 
@@ -88,6 +87,7 @@ function App() {
 
   function switchMode(nextMode) {
     setMode(nextMode);
+    setShowPassword(false);
     setMessage('');
     setError('');
   }
@@ -198,9 +198,8 @@ function App() {
         });
 
         setMode('login');
+        setShowPassword(false);
       } else {
-        // The backend must set the JWT in an HTTP-only cookie.
-        // Never read or store the JWT in localStorage.
         if (!data.user) {
           throw new Error(
             'Login response did not contain user information.'
@@ -208,10 +207,13 @@ function App() {
         }
 
         setUser(data.user);
+
         setForm((previous) => ({
           ...previous,
           password: '',
         }));
+
+        setShowPassword(false);
         setMessage('You have logged in successfully.');
       }
     } catch (err) {
@@ -243,13 +245,16 @@ function App() {
       }
 
       setUser(null);
+
       setForm({
         name: '',
         email: '',
         password: '',
         contactNumber: '',
       });
+
       setMode('login');
+      setShowPassword(false);
       setMessage('You have been logged out.');
     } catch (err) {
       setError(
@@ -338,7 +343,6 @@ function App() {
           </div>
         )}
 
-        
         {user ? (
           <div className="signed-in">
             <p>
@@ -386,7 +390,6 @@ function App() {
             </button>
           </div>
         ) : (
-
           <>
             <div className="tabs">
               <button
@@ -449,18 +452,31 @@ function App() {
               />
 
               <label htmlFor="password">Password</label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                value={form.password}
-                onChange={updateField}
-                placeholder="Enter your password"
-                autoComplete={
-                  mode === 'login' ? 'current-password' : 'new-password'
-                }
-                required
-              />
+
+              <div className="password-field">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={updateField}
+                  placeholder="Enter your password"
+                  autoComplete={
+                    mode === 'login' ? 'current-password' : 'new-password'
+                  }
+                  required
+                />
+
+                <button
+                  className="password-toggle"
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
 
               <button
                 className="primary-button"
