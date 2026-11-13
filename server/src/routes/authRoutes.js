@@ -6,7 +6,9 @@ const {
   register,
   login,
   logout,
-  getCurrentUser
+  getCurrentUser,
+  forgotPassword,
+  resetPassword
 } = require('../controllers/authController');
 
 const authenticate = require('../middleware/authenticate');
@@ -26,15 +28,19 @@ const limiter = rateLimit({
   }
 });
 
-// US-03: Authentication routes
+// Registration and login
 router.post('/register', limiter, register);
 router.post('/login', limiter, login);
 router.post('/logout', logout);
 
-// Restore the currently authenticated user's session
+// Forgot and reset password
+router.post('/forgot-password', limiter, forgotPassword);
+router.post('/reset-password', limiter, resetPassword);
+
+// Restore authenticated session
 router.get('/me', authenticate, getCurrentUser);
 
-// US-02: Admin-only role verification route
+// Admin-only role verification
 router.get(
   '/admin-check',
   authenticate,
