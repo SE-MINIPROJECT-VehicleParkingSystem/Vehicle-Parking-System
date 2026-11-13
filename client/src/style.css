@@ -637,6 +637,7 @@ select {
     font-size: 21px;
   }
 }
+<<<<<<< HEAD
 .password-field {
   position: relative;
   width: 100%;
@@ -668,4 +669,128 @@ select {
   outline: 2px solid #2457d6;
   outline-offset: 2px;
   border-radius: 3px;
+=======
+
+/* Customer booking and cancellation */
+
+.booking-input {
+  margin: 18px 0;
+}
+
+.booking-input input {
+  margin-top: 8px;
+  margin-bottom: 5px;
+}
+
+.booking-input small {
+  display: block;
+  color: #69758b;
+  font-size: 12px;
+}
+
+.book-button,
+.cancel-button {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.book-button {
+  background: #2457d6;
+  color: white;
+}
+
+.cancel-button {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.book-button:disabled,
+.cancel-button:disabled {
+  opacity: 0.6;
+}
+
+.my-bookings {
+  margin-top: 28px;
+}
+
+.my-bookings h2 {
+  margin-bottom: 12px;
+}
+
+.booking-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid #e5eaf3;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.booking-card p {
+  margin: 5px 0;
+  font-size: 13px;
+}
+
+.booking-card small {
+  color: #69758b;
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  .booking-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+/* Staff account provisioning */
+
+.staff-provisioning {
+  margin: 25px 0;
+  padding: 22px;
+  border: 1px solid #e5eaf3;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.staff-provisioning h2 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.staff-provisioning form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 450px;
+}
+
+.staff-provisioning label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.staff-provisioning input {
+  width: 100%;
+  padding: 11px;
+  border: 1px solid #d8deea;
+  border-radius: 7px;
+  font-size: 14px;
+}
+
+.staff-provisioning input:focus {
+  outline: 2px solid #2457d6;
+  border-color: transparent;
+}
+
+.staff-provisioning .primary-button {
+  margin-top: 12px;
+>>>>>>> 8502b98 (style: add booking and staff provisioning styles)
 }
