@@ -1,0 +1,367 @@
+﻿
+========== server/src/controllers/adminController.js ==========
+
+const ParkingSlot = require('../models/ParkingSlot');
+const ParkingTransaction = require('../models/ParkingTransaction');
+const { sendSuccess } = require('../utils/apiResponse');
+
+async function getDashboard(req, res, next) {
+  try {
+    // Count slots by their saved status.
+    const [
+      totalSlots,
+      availableSlots,
+      occupiedSlots,
+      reservedSlots,
+      activeSessions,
+      completedSessions,
+      recentTransactions,
+      slots,
+    ] = await Promise.all([
+      ParkingSlot.countDocuments(),
+      ParkingSlot.countDocuments({ status: 'Available' }),
+      ParkingSlot.countDocuments({ status: 'Occupied' }),
+      ParkingSlot.countDocuments({ status: 'Reserved' }),
+
+      // Vehicles that have entered but have not exited yet.
+      ParkingTransaction.countDocuments({ exitTime: null }),
+
+      // Sessions that have an exit time.
+      ParkingTransaction.countDocuments({
+        exitTime: { $ne: null },
+      }),
+
+      // Latest 10 parking transactions.
+      ParkingTransaction.find()
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .select(
+          'transactionId entryTicketNumber vehicleNumberPlate vehicleType slotId entryTime exitTime fee paymentStatus paymentMethod'
+        )
+        .lean(),
+
+      // Current slot information.
+      ParkingSlot.find()
+        .sort({ zone: 1, slotNumber: 1 })
+        .select('slotId zone slotNumber status vehicleType')
+        .lean(),
+    ]);
+
+    const occupancyRate =
+      totalSlots === 0
+        ? 0
+        : Number(((occupiedSlots / totalSlots) * 100).toFixed(2));
+
+    return sendSuccess(res, 'Admin dashboard data retrieved.', {
+      summary: {
+        totalSlots,
+        availableSlots,
+        occupiedSlots,
+        reservedSlots,
+        activeSessions,
+        completedSessions,
+        occupancyRate,
+      },
+      slots,
+      recentTransactions,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+module.exports = { getDashboard };
+
+
+========== server/src/routes/adminRoutes.js ==========
+const express = require('express');
+
+const authenticate = require('../middleware/authenticate');
+const authorize = require('../middleware/authorize');
+const { getDashboard } = require('../controllers/adminController');
+
+const router = express.Router();
+
+router.get(
+  '/dashboard',
+  authenticate,
+  authorize('Admin'),
+  getDashboard
+);
+
+module.exports = router;
+
+========== client/src/AdminDashboard.jsx ==========
+
+import React, { useCallback, useEffect, useState } from 'react';
+
+export default function AdminDashboard({ apiBaseUrl }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/dashboard`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || 'Could not load the Admin dashboard.'
+        );
+      }
+
+      const data = result.data ?? result;
+
+      setDashboard(data);
+      setLastUpdated(new Date());
+      setError('');
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot connect to the backend. Check that the server is running.'
+          : err.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    loadDashboard();
+
+    const timer = setInterval(loadDashboard, 10000);
+
+    return () => clearInterval(timer);
+  }, [loadDashboard]);
+
+  if (loading && !dashboard) {
+    return (
+      <section className="admin-dashboard">
+        <p className="subtitle">Loading Admin dashboard...</p>
+      </section>
+    );
+  }
+
+  const summary = dashboard?.summary;
+  const slots = dashboard?.slots ?? [];
+  const transactions = dashboard?.recentTransactions ?? [];
+
+  return (
+    <section className="admin-dashboard">
+      <div className="admin-dashboard-header">
+        <div>
+          <p className="admin-eyebrow">ADMINISTRATION</p>
+          <h2>Parking Management Dashboard</h2>
+          <p className="admin-subtitle">
+            Monitor parking operations and saved records.
+          </p>
+        </div>
+
+        <button
+          className="admin-refresh-button"
+          type="button"
+          onClick={loadDashboard}
+          disabled={loading}
+        >
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="notice failure" role="alert">
+          {error}
+        </div>
+      )}
+
+      {summary && (
+        <>
+          <div className="admin-stat-grid">
+            <div className="admin-stat-card">
+              <span>Total slots</span>
+              <strong>{summary.totalSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card available-stat">
+              <span>Available</span>
+              <strong>{summary.availableSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card occupied-stat">
+              <span>Occupied</span>
+              <strong>{summary.occupiedSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card reserved-stat">
+              <span>Reserved</span>
+              <strong>{summary.reservedSlots}</strong>
+            </div>
+          </div>
+
+          <div className="admin-stat-grid admin-secondary-stats">
+            <div className="admin-stat-card">
+              <span>Active sessions</span>
+              <strong>{summary.activeSessions}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Completed sessions</span>
+              <strong>{summary.completedSessions}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Occupancy rate</span>
+              <strong>{summary.occupancyRate}%</strong>
+            </div>
+          </div>
+        </>
+      )}
+
+      <section className="admin-section">
+        <h3>Parking slot information</h3>
+
+        {slots.length === 0 ? (
+          <p className="admin-empty">No parking slots found.</p>
+        ) : (
+          <div className="admin-table-wrapper">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Slot ID</th>
+                  <th>Zone</th>
+                  <th>Slot number</th>
+                  <th>Vehicle type</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {slots.map((slot) => (
+                  <tr key={slot.slotId}>
+                    <td>{slot.slotId}</td>
+                    <td>{slot.zone}</td>
+                    <td>{slot.slotNumber}</td>
+                    <td>{slot.vehicleType}</td>
+                    <td>
+                      <span
+                        className={`admin-status ${slot.status.toLowerCase()}`}
+                      >
+                        {slot.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="admin-section">
+        <h3>Recent parking transactions</h3>
+
+        {transactions.length === 0 ? (
+          <p className="admin-empty">No transactions found.</p>
+        ) : (
+          <div className="admin-table-wrapper">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Vehicle number</th>
+                  <th>Vehicle type</th>
+                  <th>Slot</th>
+                  <th>Entry time</th>
+                  <th>Exit time</th>
+                  <th>Fee</th>
+                  <th>Payment</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {transactions.map((transaction) => (
+                  <tr key={transaction.transactionId}>
+                    <td>{transaction.entryTicketNumber}</td>
+                    <td>{transaction.vehicleNumberPlate}</td>
+                    <td>{transaction.vehicleType}</td>
+                    <td>{transaction.slotId}</td>
+                    <td>
+                      {transaction.entryTime
+                        ? new Date(transaction.entryTime).toLocaleString()
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.exitTime
+                        ? new Date(transaction.exitTime).toLocaleString()
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.fee != null
+                        ? `â‚¹${transaction.fee}`
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.paymentStatus || 'Pending'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {lastUpdated && (
+        <p className="admin-last-updated">
+          Last updated: {lastUpdated.toLocaleTimeString()}
+        </p>
+      )}
+    </section>
+  );
+}
+
+
+========== server/src/models/ParkingSlot.js ==========
+const mongoose = require('mongoose');
+
+const VEHICLE_TYPES = ['Two-wheeler', 'Four-wheeler', 'Other'];
+const schema = new mongoose.Schema({
+  slotId: { type: String, required: true, unique: true, trim: true, maxlength: 10 },
+  zone: { type: String, required: true, trim: true, uppercase: true, maxlength: 10 },
+  slotNumber: { type: String, required: true, trim: true, maxlength: 10 },
+  status: { type: String, enum: ['Available', 'Occupied', 'Reserved'], required: true, default: 'Available', maxlength: 10 },
+  vehicleType: { type: String, enum: VEHICLE_TYPES, required: true, maxlength: 20 }
+}, { timestamps: true });
+schema.index({ zone: 1, slotNumber: 1 }, { unique: true });
+module.exports = mongoose.model('ParkingSlot', schema);
+
+
+========== server/src/models/ParkingTransaction.js ==========
+const mongoose = require('mongoose');
+
+const schema = new mongoose.Schema({
+  transactionId: { type: String, required: true, unique: true, trim: true, maxlength: 24 },
+  vehicleNumberPlate: { type: String, required: true, trim: true, uppercase: true, maxlength: 15 },
+  vehicleType: { type: String, enum: ['Two-wheeler', 'Four-wheeler', 'Other'], required: true, maxlength: 20 },
+  slotId: { type: String, required: true, trim: true, maxlength: 10 },
+  entryTicketNumber: { type: String, required: true, unique: true, trim: true, maxlength: 20 },
+  entryTime: { type: Date, required: true, default: Date.now },
+  exitTime: { type: Date, default: null },
+  fee: { type: Number, min: 0, default: null },
+  paymentStatus: { type: String, enum: ['Paid', 'Pending'], default: 'Pending', maxlength: 10 },
+  paymentMethod: { type: String, enum: ['Cash', 'Online', null], default: null, maxlength: 10 }
+}, { timestamps: true });
+
+// Only one open session (no exit time) per plate; enforced by MongoDB, not app code.
+schema.index(
+  { vehicleNumberPlate: 1 },
+  { unique: true, partialFilterExpression: { exitTime: { $type: 'null' } } }
+);
+
+module.exports = mongoose.model('ParkingTransaction', schema);
+

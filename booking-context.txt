@@ -1,0 +1,1756 @@
+﻿
+========== server/src/models/User.js ==========
+
+const mongoose = require('mongoose');
+
+const schema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true,
+    minlength: 2,
+    maxlength: 50
+  },
+
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true,
+    maxlength: 100,
+    match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  },
+
+  passwordHash: {
+    type: String,
+    required: true,
+    minlength: 60,
+    maxlength: 60,
+    select: false
+  },
+
+  contactNumber: {
+    type: String,
+    required: true,
+    trim: true,
+    maxlength: 15
+  },
+
+  failedLoginAttempts: {
+    type: Number,
+    default: 0,
+    min: 0,
+    select: false
+  },
+
+  lockUntil: {
+    type: Date,
+    default: null,
+    select: false
+  },
+
+  // Password reset fields
+  passwordResetTokenHash: {
+    type: String,
+    default: null,
+    select: false
+  },
+
+  passwordResetExpires: {
+    type: Date,
+    default: null,
+    select: false
+  },
+
+  role: {
+    type: String,
+    enum: ['Owner', 'Staff', 'Admin'],
+    required: true,
+    default: 'Owner'
+  },
+
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, {
+  timestamps: true
+});
+
+module.exports = mongoose.model('User', schema);
+
+
+========== server/src/models/Vehicle.js ==========
+const mongoose = require('mongoose');
+
+const VEHICLE_TYPES = ['Two-wheeler', 'Four-wheeler', 'Other'];
+const schema = new mongoose.Schema({
+  vehicleId: { type: String, required: true, unique: true, trim: true, maxlength: 24 },
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  numberPlate: { type: String, required: true, trim: true, uppercase: true, maxlength: 15 },
+  vehicleType: { type: String, enum: VEHICLE_TYPES, required: true, maxlength: 20 }
+}, { timestamps: true });
+schema.index({ numberPlate: 1 }, { unique: true });
+module.exports = mongoose.model('Vehicle', schema);
+module.exports.VEHICLE_TYPES = VEHICLE_TYPES;
+
+
+========== server/src/middleware/auth.js ==========
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { sendError } = require('../utils/apiResponse');
+
+async function requireAuth(req, res, next) {
+  try {
+    const token = req.cookies?.parking_token;
+    if (!token) return sendError(res, 'Not authenticated.', 401);
+
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+      throw new Error('JWT_SECRET must be at least 32 characters.');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.sub);
+    if (!user || !user.isActive) return sendError(res, 'Not authenticated.', 401);
+
+    req.user = user;
+    return next();
+  } catch (error) {
+    if (
+      error.name === 'JsonWebTokenError' ||
+      error.name === 'TokenExpiredError' ||
+      error.name === 'NotBeforeError'
+    ) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+    return next(error);
+  }
+}
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return sendError(res, 'You do not have permission to perform this action.', 403);
+    }
+    return next();
+  };
+}
+
+module.exports = { requireAuth, requireRole };
+
+========== server/src/server.js ==========
+require('dotenv').config();
+
+const app = require('./app');
+const connectDB = require('./config/db');
+
+const port = Number(process.env.PORT || 5000);
+
+async function startServer() {
+  try {
+    await connectDB();
+
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`API listening on port ${port}`);
+    });
+  } catch (error) {
+    console.error(`Startup failed: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+startServer();
+
+
+========== server/src/app.js ==========
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
+
+const adminRoutes = require('./routes/adminRoutes');
+const authRoutes = require('./routes/authRoutes');
+const entryRoutes = require('./routes/entryRoutes');
+const exitRoutes = require('./routes/exitRoutes');
+const slotRoutes = require('./routes/slotRoutes');
+const {
+  sendSuccess,
+  sendError,
+} = require('./utils/apiResponse');
+
+const app = express();
+
+// Required when running behind Render's reverse proxy.
+// This allows express-rate-limit to identify client IPs correctly.
+app.set('trust proxy', 1);
+
+// Security headers
+app.use(helmet());
+
+// Parse HTTP-only authentication cookies
+app.use(cookieParser());
+
+// Allow requests from the configured frontend origin
+app.use(
+  cors({
+    origin:
+      process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+    credentials: true,
+  })
+);
+
+// Parse JSON request bodies
+app.use(express.json({ limit: '20kb' }));
+
+// Health check
+app.get('/api/health', (_req, res) => {
+  return sendSuccess(res, 'API is running.', {
+    service: 'vehicle-parking-api',
+  });
+});
+
+// Authentication routes
+app.use('/api/auth', authRoutes);
+app.use('/api/entries', entryRoutes);
+app.use('/api/exits', exitRoutes);
+app.use('/api/slots', slotRoutes);
+
+app.use('/api/admin', adminRoutes);
+
+// Handle unknown routes
+app.use((_req, res) => {
+  return sendError(res, 'Route not found.', 404);
+});
+
+// Central error handler
+app.use((err, _req, res, _next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    return sendError(
+      res,
+      'Request body must be valid JSON.',
+      400
+    );
+  }
+
+  if (err && err.name === 'ValidationError') {
+    return sendError(
+      res,
+      'Submitted data failed validation.',
+      400
+    );
+  }
+
+  if (err && err.code === 11000) {
+    return sendError(
+      res,
+      'A record with that unique value already exists.',
+      409
+    );
+  }
+
+  console.error(err);
+
+  return sendError(res, 'Internal server error.', 500);
+});
+
+module.exports = app;
+
+========== client/src/main.jsx ==========
+
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import './style.css';
+import EntryForm from './EntryForm.jsx';
+import SlotAvailability from './SlotAvailability.jsx';
+import ExitForm from './ExitForm.jsx';
+import AdminDashboard from './AdminDashboard.jsx';
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+).replace(/\/+$/, '');
+
+const API_URL = `${API_BASE_URL}/auth`;
+const HEALTH_URL = `${API_BASE_URL}/health`;
+
+function App() {
+  const resetToken = new URLSearchParams(window.location.search).get('token');
+
+  const [mode, setMode] = useState(
+    resetToken ? 'reset' : 'login'
+  );
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    contactNumber: '',
+  });
+
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        const response = await fetch(`${API_URL}/me`, {
+          method: 'GET',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          if (response.status !== 401) {
+            throw new Error('Could not check your login session.');
+          }
+          return;
+        }
+
+        const result = await response.json();
+        const data = result.data ?? result;
+
+        if (!cancelled && data.user) {
+          setUser(data.user);
+        }
+      } catch {
+        if (!cancelled) {
+          setError(
+            'Could not connect to the authentication service. Check that the backend is running.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingSession(false);
+        }
+      }
+    }
+
+    restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function updateField(event) {
+    const { name, value } = event.target;
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+
+    setError('');
+  }
+
+  function switchMode(nextMode) {
+    setMode(nextMode);
+    setShowPassword(false);
+    setPassword('');
+    setConfirmPassword('');
+    setMessage('');
+    setError('');
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+
+    const isRegister = mode === 'register';
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    if (isRegister) {
+      if (form.name.trim().length < 2 || form.name.trim().length > 50) {
+        setError('Name must contain 2 to 50 characters.');
+        return;
+      }
+
+      if (!form.contactNumber.trim() || form.contactNumber.trim().length > 15) {
+        setError('Enter a valid contact number.');
+        return;
+      }
+    }
+
+    if (
+      typeof form.password !== 'string' ||
+      (isRegister && (form.password.length < 8 || form.password.length > 128))
+    ) {
+      setError('Password must contain between 8 and 128 characters.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const endpoint = isRegister ? 'register' : 'login';
+
+      const payload = isRegister
+        ? {
+            name: form.name.trim(),
+            email: form.email.trim(),
+            password: form.password,
+            contactNumber: form.contactNumber.trim(),
+          }
+        : {
+            email: form.email.trim(),
+            password: form.password,
+          };
+
+      const response = await fetch(`${API_URL}/${endpoint}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.message || 'The request failed.');
+      }
+
+      const data = result.data ?? result;
+
+      if (isRegister) {
+        setMessage(
+          result.message || 'Registration successful! You can now log in.'
+        );
+
+        setForm({
+          name: '',
+          email: form.email.trim(),
+          password: '',
+          contactNumber: '',
+        });
+
+        setMode('login');
+      } else {
+        if (!data.user) {
+          throw new Error(
+            'Login response did not contain user information.'
+          );
+        }
+
+        setUser(data.user);
+
+        setForm((previous) => ({
+          ...previous,
+          password: '',
+        }));
+
+        setMessage('You have logged in successfully.');
+      }
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Something went wrong.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword(event) {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Could not process your request.');
+      }
+
+      setMessage(
+        result.message ||
+        'If an account exists with this email, a reset link will be sent.'
+      );
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Something went wrong.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResetPassword(event) {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+
+    if (!resetToken) {
+      setError('Password reset link is missing. Request a new link.');
+      return;
+    }
+
+    if (password.length < 8 || password.length > 128) {
+      setError('Password must contain between 8 and 128 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: resetToken,
+          password,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Password reset failed.');
+      }
+
+      setPassword('');
+      setConfirmPassword('');
+      setForm((previous) => ({
+        ...previous,
+        password: '',
+      }));
+
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      setMode('login');
+      setMessage(
+        result.message || 'Password reset successful. You can now log in.'
+      );
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Check that the backend is running.'
+          : err.message || 'Password reset failed.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function logout() {
+    setMessage('');
+    setError('');
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Logout failed.');
+      }
+
+      setUser(null);
+
+      setForm({
+        name: '',
+        email: '',
+        password: '',
+        contactNumber: '',
+      });
+
+      setMode('login');
+      setMessage('You have been logged out.');
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Please try again.'
+          : err.message || 'Logout failed.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function checkAPI() {
+    setMessage('');
+    setError('');
+
+    try {
+      const response = await fetch(HEALTH_URL, {
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'The API health check failed.');
+      }
+
+      setMessage(result.message || 'The API is running.');
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot reach the API. Make sure the backend is running.'
+          : err.message || 'The API health check failed.'
+      );
+    }
+  }
+
+  if (checkingSession) {
+    return (
+      <main className="page">
+        <section className="auth-card">
+          <div className="brand-mark" aria-hidden="true">P</div>
+          <p className="eyebrow">VEHICLE PARKING SYSTEM</p>
+          <h1>Checking your session...</h1>
+          <p className="subtitle">
+            Please wait while we check your login status.
+          </p>
+        </section>
+        <footer>Vehicle Parking System Â· Sprint 1</footer>
+      </main>
+    );
+  }
+
+  return (
+    <main className="page">
+      <section className="auth-card">
+        <div className="brand-mark" aria-hidden="true">P</div>
+
+        <p className="eyebrow">VEHICLE PARKING SYSTEM</p>
+
+        <h1>
+          {user
+            ? 'Welcome!'
+            : mode === 'forgot'
+              ? 'Forgot password?'
+              : mode === 'reset'
+                ? 'Reset password'
+                : mode === 'login'
+                  ? 'Welcome back'
+                  : 'Create your account'}
+        </h1>
+
+        <p className="subtitle">
+          {user
+            ? 'You are signed in.'
+            : mode === 'forgot'
+              ? 'Enter your registered email address. We will send you a reset link.'
+              : mode === 'reset'
+                ? 'Choose a new password for your account.'
+                : mode === 'login'
+                  ? 'Sign in to continue to your parking account.'
+                  : 'Register to get started with hassle-free parking.'}
+        </p>
+
+        {message && (
+          <div className="notice success" role="status">
+            {message}
+          </div>
+        )}
+
+        {error && (
+          <div className="notice failure" role="alert">
+            {error}
+          </div>
+        )}
+
+        {user ? (
+          <div className="signed-in">
+            <p>
+              <strong>Email:</strong> {user.email || 'Not provided'}
+            </p>
+
+            {user.name && (
+              <p>
+                <strong>Name:</strong> {user.name}
+              </p>
+            )}
+
+            {user.role && (
+              <p>
+                <strong>Role:</strong> {user.role}
+              </p>
+            )}
+
+            {user.role === 'Admin' ? (
+              <AdminDashboard apiBaseUrl={API_BASE_URL} />
+            ) : (
+              <>
+                <SlotAvailability apiBaseUrl={API_BASE_URL} />
+
+                {user.role === 'Staff' ? (
+                  <>
+                    <EntryForm apiBaseUrl={API_BASE_URL} />
+                    <ExitForm apiBaseUrl={API_BASE_URL} />
+                  </>
+                ) : (
+                  <p className="subtitle">
+                    Parking entry and exit are available to gate staff only.
+                  </p>
+                )}
+              </>
+            )}
+
+            <button
+              className="primary-button"
+              type="button"
+              onClick={logout}
+              disabled={loading}
+            >
+              {loading ? 'Please wait...' : 'Log out'}
+            </button>
+          </div>
+        ) : mode === 'forgot' ? (
+          <>
+            <form onSubmit={handleForgotPassword}>
+              <label htmlFor="forgotEmail">Email address</label>
+              <input
+                id="forgotEmail"
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm((previous) => ({
+                    ...previous,
+                    email: event.target.value,
+                  }))
+                }
+                placeholder="you@example.com"
+                autoComplete="email"
+                maxLength={100}
+                required
+              />
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={loading}
+              >
+                {loading ? 'Sending...' : 'Send reset link'}
+              </button>
+            </form>
+
+            <p className="switch-copy">
+              Remember your password?{' '}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => switchMode('login')}
+              >
+                Back to login
+              </button>
+            </p>
+          </>
+        ) : mode === 'reset' ? (
+          <>
+            <form onSubmit={handleResetPassword}>
+              <label htmlFor="newPassword">New password</label>
+              <input
+                id="newPassword"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter new password"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={128}
+                required
+              />
+
+              <label htmlFor="confirmPassword">Confirm password</label>
+              <input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder="Confirm new password"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={128}
+                required
+              />
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={loading}
+              >
+                {loading ? 'Resetting...' : 'Reset password'}
+              </button>
+            </form>
+
+            <p className="switch-copy">
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => switchMode('login')}
+              >
+                Back to login
+              </button>
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="tabs">
+              <button
+                type="button"
+                className={mode === 'login' ? 'tab active' : 'tab'}
+                onClick={() => switchMode('login')}
+              >
+                Login
+              </button>
+
+              <button
+                type="button"
+                className={mode === 'register' ? 'tab active' : 'tab'}
+                onClick={() => switchMode('register')}
+              >
+                Register
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              {mode === 'register' && (
+                <>
+                  <label htmlFor="name">Full name</label>
+                  <input
+                    id="name"
+                    name="name"
+                    value={form.name}
+                    onChange={updateField}
+                    placeholder="Enter your full name"
+                    maxLength={50}
+                    autoComplete="name"
+                    required
+                  />
+
+                  <label htmlFor="contactNumber">Contact number</label>
+                  <input
+                    id="contactNumber"
+                    name="contactNumber"
+                    value={form.contactNumber}
+                    onChange={updateField}
+                    placeholder="Enter your contact number"
+                    maxLength={15}
+                    autoComplete="tel"
+                    required
+                  />
+                </>
+              )}
+
+              <label htmlFor="email">Email address</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                value={form.email}
+                onChange={updateField}
+                placeholder="you@example.com"
+                maxLength={100}
+                autoComplete="email"
+                required
+              />
+
+              <label htmlFor="password">Password</label>
+
+              <div className="password-field">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={updateField}
+                  placeholder="Enter your password"
+                  autoComplete={
+                    mode === 'login' ? 'current-password' : 'new-password'
+                  }
+                  required
+                />
+
+                <button
+                  className="password-toggle"
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={loading}
+              >
+                {loading
+                  ? 'Please wait...'
+                  : mode === 'login'
+                    ? 'Sign in'
+                    : 'Create account'}
+              </button>
+            </form>
+
+            {mode === 'login' && (
+              <p className="switch-copy">
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => switchMode('forgot')}
+                >
+                  Forgot password?
+                </button>
+              </p>
+            )}
+
+            <p className="switch-copy">
+              {mode === 'login'
+                ? "Don't have an account?"
+                : 'Already have an account?'}{' '}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() =>
+                  switchMode(mode === 'login' ? 'register' : 'login')
+                }
+              >
+                {mode === 'login' ? 'Register' : 'Sign in'}
+              </button>
+            </p>
+          </>
+        )}
+
+        <button
+          className="health-link"
+          type="button"
+          onClick={checkAPI}
+        >
+          Check API status
+        </button>
+      </section>
+
+      <footer>Vehicle Parking System Â· Sprint 1</footer>
+    </main>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App />);
+
+
+========== client/src/SlotAvailability.jsx ==========
+import React, { useCallback, useEffect, useState } from 'react';
+
+const VEHICLE_TYPES = ['Two-wheeler', 'Four-wheeler', 'Other'];
+const REFRESH_MS = 10000;
+
+export default function SlotAvailability({ apiBaseUrl }) {
+  const [vehicleType, setVehicleType] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (vehicleType) params.set('vehicleType', vehicleType);
+    if (statusFilter) params.set('status', statusFilter);
+    const query = params.toString();
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/slots${query ? `?${query}` : ''}`,
+        { credentials: 'include' }
+      );
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Slot availability is currently unavailable.');
+      }
+
+      setData(result.data);
+      setError('');
+    } catch (err) {
+      // Keep the last good data on screen, but tell the user it may be out of date.
+      setError(
+        err instanceof TypeError
+          ? 'Slot availability is currently unavailable. Check that the backend is running.'
+          : err.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, vehicleType, statusFilter]);
+
+  // Load now, then poll so the view follows vehicle entries and exits.
+  useEffect(() => {
+    setLoading(true);
+    load();
+    const timer = setInterval(load, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const summary = data?.summary;
+
+  return (
+    <div className="slot-panel">
+      <h2>Parking slot availability</h2>
+
+      {error && (
+        <div className="notice failure" role="alert">
+          {error}
+          {data && ' The slots shown below may be out of date.'}
+        </div>
+      )}
+
+      {summary && (
+        <div className="slot-summary" aria-label="Slot counts">
+          <span className="slot-count available">Available: {summary.available}</span>
+          <span className="slot-count occupied">Occupied: {summary.occupied}</span>
+          {summary.reserved > 0 && (
+            <span className="slot-count reserved">Reserved: {summary.reserved}</span>
+          )}
+          <span className="slot-count">Total: {summary.total}</span>
+        </div>
+      )}
+
+      <div className="slot-filters">
+        <select
+          aria-label="Filter by vehicle type"
+          value={vehicleType}
+          onChange={(e) => setVehicleType(e.target.value)}
+        >
+          <option value="">All vehicle types</option>
+          {VEHICLE_TYPES.map((type) => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">All statuses</option>
+          <option value="Available">Available</option>
+          <option value="Occupied">Occupied</option>
+          <option value="Reserved">Reserved</option>
+        </select>
+      </div>
+
+      {loading && !data && <p className="subtitle">Loading slot availability...</p>}
+
+      {data && data.slots.length === 0 && (
+        <p className="subtitle">No parking slots match your search.</p>
+      )}
+
+      {data && data.slots.length > 0 && (
+        <ul className="slot-grid">
+          {data.slots.map((slot) => (
+            <li
+              key={slot.slotId}
+              className={`slot-tile ${slot.status.toLowerCase()}`}
+              title={`${slot.slotId} Â· ${slot.vehicleType} Â· ${slot.status}`}
+            >
+              <strong>{slot.slotId}</strong>
+              <span>{slot.status}</span>
+              <small>{slot.vehicleType}</small>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="slot-footer">
+        {data && (
+          <small>Last updated {new Date(data.updatedAt).toLocaleTimeString()}</small>
+        )}
+        <button className="text-button" type="button" onClick={load}>
+          Refresh now
+        </button>
+      </div>
+    </div>
+  );
+}
+
+========== client/src/style.css ==========
+
+:root {
+  font-family: Inter, Arial, sans-serif;
+  color: #172033;
+  background: #f2f5fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+  background:
+    radial-gradient(circle at 10% 10%, #dbeafe 0, transparent 38%),
+    radial-gradient(circle at 90% 90%, #e8edff 0, transparent 35%),
+    #f2f5fb;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 40px;
+  background: #ffffff;
+  border: 1px solid #e5eaf3;
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgba(24, 43, 75, 0.09);
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #2457d6;
+  color: white;
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.eyebrow {
+  margin: 22px 0 8px;
+  color: #2457d6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: -0.8px;
+  line-height: 1.25;
+}
+
+.subtitle {
+  margin: 10px 0 25px;
+  color: #69758b;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 5px;
+  margin-bottom: 26px;
+  border-radius: 9px;
+  background: #f0f3f9;
+}
+
+.tab {
+  padding: 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #68758b;
+  font-weight: 700;
+  transition: background 0.2s, color 0.2s;
+}
+
+.tab.active {
+  background: white;
+  color: #2457d6;
+  box-shadow: 0 2px 7px rgba(24, 43, 75, 0.1);
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+}
+
+label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #34415a;
+}
+
+input {
+  width: 100%;
+  padding: 13px 14px;
+  margin-bottom: 19px;
+  border: 1px solid #d8dfeb;
+  border-radius: 8px;
+  outline: none;
+  background: white;
+  color: #172033;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input::placeholder {
+  color: #9aa4b5;
+}
+
+input:focus {
+  border-color: #2457d6;
+  box-shadow: 0 0 0 3px rgba(36, 87, 214, 0.12);
+}
+
+.password-field {
+  position: relative;
+  width: 100%;
+}
+
+.password-field input {
+  padding-right: 65px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: #2457d6;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  color: #1946b8;
+  text-decoration: underline;
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid #2457d6;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.primary-button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: #2457d6;
+  color: white;
+  font-weight: 750;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #1946b8;
+}
+
+.primary-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.switch-copy {
+  margin: 22px 0 10px;
+  color: #69758b;
+  text-align: center;
+  font-size: 13px;
+}
+
+.text-button,
+.health-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2457d6;
+  font-weight: 700;
+}
+
+.text-button:hover,
+.health-link:hover {
+  text-decoration: underline;
+}
+
+.health-link {
+  display: block;
+  margin: 22px auto 0;
+  font-size: 13px;
+}
+
+.notice {
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.success {
+  background: #eaf8ef;
+  color: #176534;
+}
+
+.failure {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.signed-in p {
+  overflow-wrap: anywhere;
+}
+
+footer {
+  padding-top: 22px;
+  color: #8590a4;
+  font-size: 12px;
+}
+
+/* Select inputs */
+
+select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #d9dcf0;
+  border-radius: 9px;
+  background: #eaedff;
+  font-size: 1rem;
+  margin-bottom: 14px;
+}
+
+.entry-panel h2 {
+  font-size: 1.1rem;
+  margin: 18px 0 8px;
+}
+
+.ticket p {
+  margin: 2px 0;
+}
+
+/* Slot availability */
+
+.slot-panel h2 {
+  font-size: 1.1rem;
+  margin: 18px 0 8px;
+}
+
+.slot-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.slot-count {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eef0f6;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.slot-count.available {
+  background: #eaf8ef;
+  color: #176534;
+}
+
+.slot-count.occupied {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.slot-count.reserved {
+  background: #fff6e0;
+  color: #8a5a00;
+}
+
+.slot-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.slot-filters select {
+  margin-bottom: 10px;
+}
+
+.slot-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.slot-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border-radius: 10px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.slot-tile small {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.slot-tile.available {
+  background: #eaf8ef;
+  color: #176534;
+}
+
+.slot-tile.occupied {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.slot-tile.reserved {
+  background: #fff6e0;
+  color: #8a5a00;
+}
+
+.slot-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #8590a4;
+  margin-bottom: 8px;
+}
+
+/* Parking receipt */
+
+.exit-panel h2 {
+  font-size: 1.1rem;
+  margin: 24px 0 8px;
+}
+
+.exit-result {
+  margin-top: 18px;
+}
+
+.exit-result h3,
+.receipt-card h3 {
+  margin-top: 0;
+}
+
+.exit-result p,
+.receipt-card p {
+  margin: 6px 0;
+}
+
+.receipt-card {
+  padding: 18px;
+  margin-top: 18px;
+  border: 1px solid #d8dfeb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card h3 {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #parking-receipt,
+  #parking-receipt * {
+    visibility: visible;
+  }
+
+  #parking-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: none;
+    box-shadow: none;
+  }
+
+  #parking-receipt button {
+    display: none;
+  }
+}
+
+/* Admin Parking Management Dashboard */
+
+.admin-dashboard {
+  width: 100%;
+  margin-top: 24px;
+  color: #172033;
+}
+
+.admin-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.admin-dashboard-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.4;
+}
+
+.admin-eyebrow {
+  margin: 0 0 8px;
+  color: #2457d6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.admin-subtitle {
+  margin: 8px 0 0;
+  color: #69758b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-refresh-button {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border: 1px solid #2457d6;
+  border-radius: 9px;
+  background: #2457d6;
+  color: white;
+  font-weight: 700;
+}
+
+.admin-refresh-button:hover:not(:disabled) {
+  background: #1946b8;
+}
+
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.admin-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #e5eaf3;
+  border-radius: 12px;
+  background: #f8faff;
+}
+
+.admin-stat-card span {
+  color: #69758b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-stat-card strong {
+  color: #172033;
+  font-size: 25px;
+}
+
+.admin-stat-card.available-stat strong {
+  color: #176534;
+}
+
+.admin-stat-card.occupied-stat strong {
+  color: #a52626;
+}
+
+.admin-stat-card.reserved-stat strong {
+  color: #8a5a00;
+}
+
+.admin-secondary-stats .admin-stat-card strong {
+  font-size: 21px;
+}
+
+.admin-section {
+  margin-top: 28px;
+}
+
+.admin-section h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.admin-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e5eaf3;
+  border-radius: 10px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #e5eaf3;
+}
+
+.admin-table th {
+  background: #f0f3f9;
+  color: #526078;
+  font-weight: 750;
+}
+
+.admin-table td {
+  color: #172033;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-status.available {
+  background: #eaf8ef;
+  color: #176534;
+}
+
+.admin-status.occupied {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.admin-status.reserved {
+  background: #fff6e0;
+  color: #8a5a00;
+}
+
+.admin-empty {
+  color: #69758b;
+  font-size: 13px;
+}
+
+.admin-last-updated {
+  margin-top: 18px;
+  color: #8590a4;
+  font-size: 12px;
+}
+
+/* Responsive layout */
+
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 26px 22px;
+  }
+
+  h1 {
+    font-size: 25px;
+  }
+
+  .admin-dashboard-header {
+    flex-direction: column;
+  }
+
+  .admin-refresh-button {
+    width: 100%;
+  }
+
+  .admin-stat-card {
+    padding: 12px;
+  }
+
+  .admin-stat-card strong {
+    font-size: 21px;
+  }
+}
+

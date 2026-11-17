@@ -1,0 +1,364 @@
+﻿
+========== server/src/models/ParkingTransaction.js ==========
+const mongoose = require('mongoose');
+
+const schema = new mongoose.Schema({
+  transactionId: { type: String, required: true, unique: true, trim: true, maxlength: 24 },
+  vehicleNumberPlate: { type: String, required: true, trim: true, uppercase: true, maxlength: 15 },
+  vehicleType: { type: String, enum: ['Two-wheeler', 'Four-wheeler', 'Other'], required: true, maxlength: 20 },
+  slotId: { type: String, required: true, trim: true, maxlength: 10 },
+  entryTicketNumber: { type: String, required: true, unique: true, trim: true, maxlength: 20 },
+  entryTime: { type: Date, required: true, default: Date.now },
+  exitTime: { type: Date, default: null },
+  fee: { type: Number, min: 0, default: null },
+  paymentStatus: { type: String, enum: ['Paid', 'Pending'], default: 'Pending', maxlength: 10 },
+  paymentMethod: { type: String, enum: ['Cash', 'Online', null], default: null, maxlength: 10 }
+}, { timestamps: true });
+
+// Only one open session (no exit time) per plate; enforced by MongoDB, not app code.
+schema.index(
+  { vehicleNumberPlate: 1 },
+  { unique: true, partialFilterExpression: { exitTime: { $type: 'null' } } }
+);
+
+module.exports = mongoose.model('ParkingTransaction', schema);
+
+
+========== server/src/models/ParkingSlot.js ==========
+const mongoose = require('mongoose');
+
+const VEHICLE_TYPES = ['Two-wheeler', 'Four-wheeler', 'Other'];
+const schema = new mongoose.Schema({
+  slotId: { type: String, required: true, unique: true, trim: true, maxlength: 10 },
+  zone: { type: String, required: true, trim: true, uppercase: true, maxlength: 10 },
+  slotNumber: { type: String, required: true, trim: true, maxlength: 10 },
+  status: { type: String, enum: ['Available', 'Occupied', 'Reserved'], required: true, default: 'Available', maxlength: 10 },
+  vehicleType: { type: String, enum: VEHICLE_TYPES, required: true, maxlength: 20 }
+}, { timestamps: true });
+schema.index({ zone: 1, slotNumber: 1 }, { unique: true });
+module.exports = mongoose.model('ParkingSlot', schema);
+
+
+========== server/src/controllers/entryController.js ==========
+const crypto = require('crypto');
+const ParkingSlot = require('../models/ParkingSlot');
+const ParkingTransaction = require('../models/ParkingTransaction');
+const { VEHICLE_TYPES } = require('../models/Vehicle');
+const { allocateSlot } = require('../services/slotAllocator');
+const { sendSuccess, sendError } = require('../utils/apiResponse');
+const { normalizePlate, isValidPlate } = require('../utils/validators');
+
+const MAX_ID_ATTEMPTS = 3;
+
+function randomHex(bytes) {
+  return crypto.randomBytes(bytes).toString('hex').toUpperCase();
+}
+
+// TXN-<16 hex> = 20 chars (limit 24); TKT-YYMMDD-<8 hex> = 19 chars (limit 20)
+function newIds() {
+  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+  return {
+    transactionId: `TXN-${randomHex(8)}`,
+    entryTicketNumber: `TKT-${datePart}-${randomHex(4)}`,
+  };
+}
+
+// Returns the field name that caused a MongoDB duplicate-key error, or null.
+function duplicateField(error) {
+  if (!error || error.code !== 11000) return null;
+  const keys = Object.keys(error.keyPattern || error.keyValue || {});
+  return keys[0] || 'unknown';
+}
+
+// Retries with fresh IDs only when an ID collides; any other error is rethrown.
+async function createSession(fields) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await ParkingTransaction.create({ ...newIds(), ...fields });
+    } catch (error) {
+      const field = duplicateField(error);
+      const idCollision = field === 'transactionId' || field === 'entryTicketNumber';
+      if (!idCollision || attempt >= MAX_ID_ATTEMPTS) throw error;
+    }
+  }
+}
+
+// Never throws, so the original error is not hidden by a failed release.
+async function releaseSlot(slot) {
+  try {
+    await ParkingSlot.updateOne({ _id: slot._id }, { status: 'Available' });
+    return true;
+  } catch (releaseError) {
+    console.error(
+      `CRITICAL: could not release slot ${slot.slotId}; it may be stuck as Occupied.`,
+      releaseError
+    );
+    return false;
+  }
+}
+
+async function recordEntry(req, res, next) {
+  try {
+    const numberPlate = normalizePlate(req.body.numberPlate);
+    const { vehicleType } = req.body;
+
+    // 1. Validate vehicle details
+    if (!isValidPlate(numberPlate)) {
+      return sendError(res, 'Number plate must be 4 to 15 letters or digits.', 400);
+    }
+    if (!VEHICLE_TYPES.includes(vehicleType)) {
+      return sendError(res, `Vehicle type must be one of: ${VEHICLE_TYPES.join(', ')}.`, 400);
+    }
+
+    // 2. Fast-path duplicate check (the unique index below is the real guarantee)
+    const active = await ParkingTransaction.findOne({
+      vehicleNumberPlate: numberPlate,
+      exitTime: null,
+    }).lean();
+    if (active) {
+      return sendError(res, 'This vehicle already has an active parking session.', 409);
+    }
+
+    // 3. Take the first available slot of this vehicle type (atomic)
+    const slot = await allocateSlot(vehicleType);
+    if (!slot) {
+      return sendError(res, 'Parking full for this vehicle type.', 409);
+    }
+
+    // 4. Create the active session
+    let transaction;
+    try {
+      transaction = await createSession({
+        vehicleNumberPlate: numberPlate,
+        vehicleType,
+        slotId: slot.slotId,
+        entryTime: new Date(),
+      });
+    } catch (error) {
+      await releaseSlot(slot);
+      // A concurrent request for the same plate won the race
+      if (duplicateField(error) === 'vehicleNumberPlate') {
+        return sendError(res, 'This vehicle already has an active parking session.', 409);
+      }
+      throw error;
+    }
+
+    return sendSuccess(
+      res,
+      'Vehicle entry recorded.',
+      {
+        transactionId: transaction.transactionId,
+        entryTicketNumber: transaction.entryTicketNumber,
+        numberPlate: transaction.vehicleNumberPlate,
+        vehicleType: transaction.vehicleType,
+        slotId: transaction.slotId,
+        entryTime: transaction.entryTime,
+      },
+      201
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+module.exports = { recordEntry };
+
+========== server/src/controllers/exitController.js ==========
+const ParkingSlot = require('../models/ParkingSlot');
+const ParkingTransaction = require('../models/ParkingTransaction');
+const { normalizePlate, isValidPlate } = require('../utils/validators');
+const { calculateFee } = require('../utils/feeCalculator');
+const { sendSuccess, sendError } = require('../utils/apiResponse');
+
+// Frees the slot after the session is closed. Never throws: the exit has already
+// been recorded, so a failed release is logged loudly and reported to the caller.
+async function releaseSlot(slotId) {
+  try {
+    await ParkingSlot.updateOne({ slotId, status: 'Occupied' }, { status: 'Available' });
+    return true;
+  } catch (releaseError) {
+    console.error(
+      `CRITICAL: session closed but slot ${slotId} could not be released; it may be stuck as Occupied.`,
+      releaseError
+    );
+    return false;
+  }
+}
+
+// Stores the calculated fee on the closed session. Never throws: the fee is still
+// returned to staff, and a failed save is logged loudly.
+async function saveFee(transactionId, fee) {
+  try {
+    await ParkingTransaction.updateOne({ transactionId }, { fee });
+    return true;
+  } catch (saveError) {
+    console.error(
+      `CRITICAL: session ${transactionId} closed but its fee (${fee}) could not be saved.`,
+      saveError
+    );
+    return false;
+  }
+}
+
+async function recordExit(req, res, next) {
+  try {
+    // 1. Validate the vehicle identifier
+    const numberPlate = normalizePlate(req.body?.numberPlate);
+    if (!isValidPlate(numberPlate)) {
+      return sendError(res, 'Number plate must be 4 to 15 letters or digits.', 400);
+    }
+
+    // 2. Find the active session AND close it in one atomic update.
+    //    Only a session with no exit time can match, so a closed session can never be
+    //    processed again, and two simultaneous exit requests cannot both succeed.
+    const session = await ParkingTransaction.findOneAndUpdate(
+      { vehicleNumberPlate: numberPlate, exitTime: null },
+      { exitTime: new Date() },
+      { new: true }
+    );
+
+    if (!session) {
+      // Tell "already exited" apart from "never entered" so staff get a useful message.
+      const closed = await ParkingTransaction.findOne({
+        vehicleNumberPlate: numberPlate,
+        exitTime: { $ne: null },
+      })
+        .sort({ exitTime: -1 })
+        .lean();
+      if (closed) {
+        return sendError(
+          res,
+          'This vehicle\'s parking session is already closed. It cannot be exited again.',
+          409
+        );
+      }
+      return sendError(res, 'No active parking session found for this vehicle.', 404);
+    }
+
+    // 3. Calculate the fee on the server from the entry and exit times (never from the client)
+    const billing = calculateFee(session.entryTime, session.exitTime, session.vehicleType);
+
+    // 4. Release the slot and store the fee (the session is already closed at this point)
+    const slotReleased = await releaseSlot(session.slotId);
+    const feeRecorded = await saveFee(session.transactionId, billing.fee);
+
+    const warnings = [];
+    if (!slotReleased) {
+      warnings.push(
+        `Slot ${session.slotId} could not be released automatically. Please ask an administrator to free it.`
+      );
+    }
+    if (!feeRecorded) {
+      warnings.push('The fee could not be saved. Please ask an administrator to check this session.');
+    }
+    const message = warnings.length
+      ? `Vehicle exit recorded and session closed, but: ${warnings.join(' ')}`
+      : 'Vehicle exit recorded. Session closed.';
+
+    return sendSuccess(res, message, {
+      transactionId: session.transactionId,
+      entryTicketNumber: session.entryTicketNumber,
+      numberPlate: session.vehicleNumberPlate,
+      vehicleType: session.vehicleType,
+      slotId: session.slotId,
+      entryTime: session.entryTime,
+      exitTime: session.exitTime,
+      durationMinutes: billing.durationMinutes,
+      billedHours: billing.billedHours,
+      ratePerHour: billing.ratePerHour,
+      fee: billing.fee,
+      currency: billing.currency,
+      paymentStatus: 'Pending',
+      slotReleased,
+      feeRecorded,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getReceipt(req, res, next) {
+  try {
+    const { transactionId } = req.params;
+
+    if (!transactionId || transactionId.length > 24) {
+      return sendError(res, 'Invalid transaction ID.', 400);
+    }
+
+    // Retrieve the actual saved parking transaction
+    const transaction = await ParkingTransaction.findOne({
+      transactionId,
+    }).lean();
+
+    if (!transaction) {
+      return sendError(res, 'Parking transaction not found.', 404);
+    }
+
+    // A receipt is available only after the vehicle exits
+    if (!transaction.exitTime || transaction.fee === null) {
+      return sendError(
+        res,
+        'A receipt is available only after the vehicle has exited.',
+        409
+      );
+    }
+
+    return sendSuccess(res, 'Parking receipt retrieved.', {
+      receiptNumber: transaction.entryTicketNumber,
+      transactionId: transaction.transactionId,
+      numberPlate: transaction.vehicleNumberPlate,
+      vehicleType: transaction.vehicleType,
+      slotId: transaction.slotId,
+      entryTime: transaction.entryTime,
+      exitTime: transaction.exitTime,
+      fee: transaction.fee,
+      paymentStatus: transaction.paymentStatus,
+      paymentMethod: transaction.paymentMethod,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+module.exports = { recordExit ,getReceipt, };
+
+========== server/src/routes/entryRoutes.js ==========
+const express = require('express');
+const { recordEntry } = require('../controllers/entryController');
+const { requireAuth, requireRole } = require('../middleware/auth');
+
+const router = express.Router();
+
+router.post('/', requireAuth, requireRole('Staff', 'Admin'), recordEntry);
+
+module.exports = router;
+
+========== server/src/routes/exitRoutes.js ==========
+const express = require('express');
+
+const {
+  recordExit,
+  getReceipt,
+} = require('../controllers/exitController');
+
+const { requireAuth, requireRole } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Record a vehicle exit
+router.post(
+  '/',
+  requireAuth,
+  requireRole('Staff', 'Admin'),
+  recordExit
+);
+
+// Retrieve a saved parking receipt
+router.get(
+  '/:transactionId/receipt',
+  requireAuth,
+  requireRole('Staff', 'Admin'),
+  getReceipt
+);
+
+module.exports = router;
