@@ -1,0 +1,894 @@
+﻿
+========== server/src/controllers/authController.js ==========
+
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const User = require('../models/User');
+const { sendSuccess, sendError } = require('../utils/apiResponse');
+const {
+  normalizeEmail,
+  isValidEmail,
+  isStrongEnoughPassword
+} = require('../utils/validators');
+
+const { sendPasswordResetEmail } = require('../utils/emailService');
+
+const COOKIE_NAME = 'parking_token';
+const MAX_FAILED_ATTEMPTS = 3;
+
+const LOCK_MINUTES = Number.parseInt(
+  process.env.LOGIN_LOCK_MINUTES || '15',
+  10
+);
+
+function cookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/',
+    maxAge: 24 * 60 * 60 * 1000
+  };
+}
+
+function safeUser(user) {
+  return {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    contactNumber: user.contactNumber,
+    role: user.role,
+    isActive: user.isActive
+  };
+}
+
+function createToken(user) {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 characters.');
+  }
+
+  return jwt.sign(
+    { role: user.role },
+    process.env.JWT_SECRET,
+    {
+      subject: user._id.toString(),
+      expiresIn: process.env.JWT_EXPIRES_IN || '1d'
+    }
+  );
+}
+
+async function register(req, res, next) {
+  try {
+    const name =
+      typeof req.body.name === 'string'
+        ? req.body.name.trim()
+        : '';
+
+    const email = normalizeEmail(req.body.email);
+    const password = req.body.password;
+
+    const contactNumber =
+      typeof req.body.contactNumber === 'string'
+        ? req.body.contactNumber.trim()
+        : '';
+
+    if (name.length < 2 || name.length > 50) {
+      return sendError(res, 'Name must contain 2 to 50 characters.', 400);
+    }
+
+    if (!isValidEmail(email) || email.length > 100) {
+      return sendError(res, 'Enter a valid email address.', 400);
+    }
+
+    if (!contactNumber || contactNumber.length > 15) {
+      return sendError(
+        res,
+        'Contact number is required and must not exceed 15 characters.',
+        400
+      );
+    }
+
+    if (!isStrongEnoughPassword(password)) {
+      return sendError(
+        res,
+        'Password must contain between 8 and 128 characters.',
+        400
+      );
+    }
+
+    if (await User.findOne({ email }).lean()) {
+      return sendError(
+        res,
+        'An account with this email already exists.',
+        409
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const user = await User.create({
+      name,
+      email,
+      passwordHash,
+      contactNumber,
+      role: 'Owner'
+    });
+
+    return sendSuccess(
+      res,
+      'Registration successful.',
+      { user: safeUser(user) },
+      201
+    );
+  } catch (error) {
+    if (error && error.code === 11000) {
+      return sendError(
+        res,
+        'An account with this email already exists.',
+        409
+      );
+    }
+
+    return next(error);
+  }
+}
+
+async function login(req, res, next) {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const password = req.body.password;
+
+    if (
+      !isValidEmail(email) ||
+      typeof password !== 'string' ||
+      !password
+    ) {
+      return sendError(res, 'Invalid email or password.', 401);
+    }
+
+    const user = await User.findOne({ email }).select(
+      '+passwordHash +failedLoginAttempts +lockUntil'
+    );
+
+    if (!user || !user.isActive) {
+      return sendError(res, 'Invalid email or password.', 401);
+    }
+
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      return sendError(
+        res,
+        'Account temporarily locked. Try again later.',
+        423
+      );
+    }
+
+    if (user.lockUntil && user.lockUntil <= new Date()) {
+      user.failedLoginAttempts = 0;
+      user.lockUntil = null;
+    }
+
+    const matches = await bcrypt.compare(password, user.passwordHash);
+
+    if (!matches) {
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+
+      if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
+        user.lockUntil = new Date(
+          Date.now() + LOCK_MINUTES * 60 * 1000
+        );
+      }
+
+      await user.save();
+
+      if (user.lockUntil) {
+        return sendError(
+          res,
+          'Account temporarily locked. Try again later.',
+          423
+        );
+      }
+
+      return sendError(res, 'Invalid email or password.', 401);
+    }
+
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+
+    await user.save();
+
+    const token = createToken(user);
+
+    res.cookie(COOKIE_NAME, token, cookieOptions());
+
+    return sendSuccess(res, 'Login successful.', {
+      user: safeUser(user)
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// Request a password reset email.
+async function forgotPassword(req, res, next) {
+  try {
+    const email = normalizeEmail(req.body.email);
+
+    if (!isValidEmail(email)) {
+      return sendError(res, 'Enter a valid email address.', 400);
+    }
+
+    const user = await User.findOne({
+      email,
+      isActive: true
+    });
+
+    // Do not reveal whether an account exists.
+    const genericMessage =
+      'If an account exists with this email, a reset link will be sent.';
+
+    if (!user) {
+      return sendSuccess(res, genericMessage, null);
+    }
+
+    // Generate a cryptographically secure, single-use token.
+    const resetToken = crypto.randomBytes(32).toString('hex');
+
+    // Store only its SHA-256 hash in the database.
+    user.passwordResetTokenHash = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    await user.save();
+
+    const clientOrigin = (
+      process.env.CLIENT_ORIGIN || 'http://localhost:5173'
+    ).replace(/\/$/, '');
+
+    const resetUrl =
+      `${clientOrigin}/reset-password?token=${encodeURIComponent(resetToken)}`;
+
+    try {
+      await sendPasswordResetEmail(user.email, resetUrl);
+    } catch (emailError) {
+      // Do not leave an unusable token behind if email delivery fails.
+      user.passwordResetTokenHash = null;
+      user.passwordResetExpires = null;
+      await user.save();
+
+      return next(emailError);
+    }
+
+    return sendSuccess(res, genericMessage, null);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// Set a new password using the emailed token.
+async function resetPassword(req, res, next) {
+  try {
+    const token = req.body.token;
+    const newPassword = req.body.password;
+
+    if (
+      typeof token !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(token)
+    ) {
+      return sendError(res, 'Invalid or expired reset link.', 400);
+    }
+
+    if (!isStrongEnoughPassword(newPassword)) {
+      return sendError(
+        res,
+        'Password must contain between 8 and 128 characters.',
+        400
+      );
+    }
+
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    const user = await User.findOne({
+      passwordResetTokenHash: tokenHash,
+      passwordResetExpires: { $gt: new Date() },
+      isActive: true
+    }).select('+passwordResetTokenHash +passwordResetExpires');
+
+    if (!user) {
+      return sendError(res, 'Invalid or expired reset link.', 400);
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Invalidate the token immediately after successful use.
+    user.passwordResetTokenHash = null;
+    user.passwordResetExpires = null;
+
+    // Reset failed login bookkeeping as well.
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+
+    await user.save();
+
+    return sendSuccess(
+      res,
+      'Password reset successful. You can now log in.',
+      null
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+function logout(_req, res) {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/'
+  });
+
+  return sendSuccess(res, 'Logged out successfully.', null);
+}
+
+async function getCurrentUser(req, res, next) {
+  try {
+    const token = req.cookies?.[COOKIE_NAME];
+
+    if (!token) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+      throw new Error('JWT_SECRET must be at least 32 characters.');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const user = await User.findById(decoded.sub);
+
+    if (!user || !user.isActive) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
+    return sendSuccess(res, 'Session restored.', {
+      user: safeUser(user)
+    });
+  } catch (error) {
+    if (
+      error.name === 'JsonWebTokenError' ||
+      error.name === 'TokenExpiredError' ||
+      error.name === 'NotBeforeError'
+    ) {
+      return sendError(res, 'Not authenticated.', 401);
+    }
+
+    return next(error);
+  }
+}
+
+module.exports = {
+  register,
+  login,
+  logout,
+  getCurrentUser,
+  forgotPassword,
+  resetPassword
+};
+
+
+========== server/src/routes/authRoutes.js ==========
+
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+
+const {
+  register,
+  login,
+  logout,
+  getCurrentUser,
+  forgotPassword,
+  resetPassword
+} = require('../controllers/authController');
+
+const authenticate = require('../middleware/authenticate');
+const authorize = require('../middleware/authorize');
+
+const router = express.Router();
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    status: 'error',
+    message: 'Too many authentication attempts. Try again later.',
+    data: null
+  }
+});
+
+// Registration and login
+router.post('/register', limiter, register);
+router.post('/login', limiter, login);
+router.post('/logout', logout);
+
+// Forgot and reset password
+router.post('/forgot-password', limiter, forgotPassword);
+router.post('/reset-password', limiter, resetPassword);
+
+// Restore authenticated session
+router.get('/me', authenticate, getCurrentUser);
+
+// Admin-only role verification
+router.get(
+  '/admin-check',
+  authenticate,
+  authorize('Admin'),
+  (_req, res) => {
+    return res.status(200).json({
+      status: 'success',
+      message: 'Admin access granted.',
+      data: null
+    });
+  }
+);
+
+module.exports = router;
+
+
+========== server/src/middleware/authenticate.js ==========
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { sendError } = require('../utils/apiResponse');
+
+async function authenticate(req, res, next) {
+  try {
+    const token = req.cookies?.parking_token;
+
+    if (!token) {
+      return sendError(res, 'Authentication required.', 401);
+    }
+
+    if (
+      !process.env.JWT_SECRET ||
+      process.env.JWT_SECRET.length < 32
+    ) {
+      return sendError(
+        res,
+        'Authentication configuration error.',
+        500
+      );
+    }
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
+
+    if (!decoded.sub) {
+      return sendError(
+        res,
+        'Invalid authentication token.',
+        401
+      );
+    }
+
+    const user = await User.findById(decoded.sub);
+
+    if (!user || !user.isActive) {
+      return sendError(
+        res,
+        'Authentication required.',
+        401
+      );
+    }
+
+    req.user = {
+      id: user._id.toString(),
+      role: user.role
+    };
+
+    next();
+  } catch (error) {
+    if (
+      error.name === 'JsonWebTokenError' ||
+      error.name === 'TokenExpiredError' ||
+      error.name === 'NotBeforeError'
+    ) {
+      return sendError(
+        res,
+        'Invalid or expired token.',
+        401
+      );
+    }
+
+    return next(error);
+  }
+}
+
+module.exports = authenticate;
+
+========== server/src/middleware/authorize.js ==========
+const { sendError } = require('../utils/apiResponse');
+
+function authorize(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return sendError(
+        res,
+        'Authentication required.',
+        401
+      );
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return sendError(
+        res,
+        'You do not have permission to access this resource.',
+        403
+      );
+    }
+
+    next();
+  };
+}
+
+module.exports = authorize;
+
+========== server/src/utils/validators.js ==========
+function normalizeEmail(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+function isValidEmail(value) {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+function isStrongEnoughPassword(value) {
+  return typeof value === 'string' && value.length >= 8 && value.length <= 128;
+}
+// Number plates: spaces and hyphens removed, upper case. Non-strings become ''.
+function normalizePlate(value) {
+  return typeof value === 'string' ? value.replace(/[\s-]/g, '').toUpperCase() : '';
+}
+function isValidPlate(value) {
+  return typeof value === 'string' && /^[A-Z0-9]{4,15}$/.test(value);
+}
+module.exports = {
+  normalizeEmail,
+  isValidEmail,
+  isStrongEnoughPassword,
+  normalizePlate,
+  isValidPlate,
+};
+
+========== server/src/utils/apiResponse.js ==========
+function sendSuccess(res,message,data=null,statusCode=200){return res.status(statusCode).json({status:'success',message,data});}
+function sendError(res,message,statusCode=500,data=null){return res.status(statusCode).json({status:'error',message,data});}
+module.exports={sendSuccess,sendError};
+
+
+========== client/src/AdminDashboard.jsx ==========
+
+import React, { useCallback, useEffect, useState } from 'react';
+
+export default function AdminDashboard({ apiBaseUrl }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/dashboard`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || 'Could not load the Admin dashboard.'
+        );
+      }
+
+      const data = result.data ?? result;
+
+      setDashboard(data);
+      setLastUpdated(new Date());
+      setError('');
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? 'Cannot connect to the backend. Check that the server is running.'
+          : err.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    loadDashboard();
+
+    const timer = setInterval(loadDashboard, 10000);
+
+    return () => clearInterval(timer);
+  }, [loadDashboard]);
+
+  if (loading && !dashboard) {
+    return (
+      <section className="admin-dashboard">
+        <p className="subtitle">Loading Admin dashboard...</p>
+      </section>
+    );
+  }
+
+  const summary = dashboard?.summary;
+  const slots = dashboard?.slots ?? [];
+  const transactions = dashboard?.recentTransactions ?? [];
+
+  return (
+    <section className="admin-dashboard">
+      <div className="admin-dashboard-header">
+        <div>
+          <p className="admin-eyebrow">ADMINISTRATION</p>
+          <h2>Parking Management Dashboard</h2>
+          <p className="admin-subtitle">
+            Monitor parking operations and saved records.
+          </p>
+        </div>
+
+        <button
+          className="admin-refresh-button"
+          type="button"
+          onClick={loadDashboard}
+          disabled={loading}
+        >
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="notice failure" role="alert">
+          {error}
+        </div>
+      )}
+
+      {summary && (
+        <>
+          <div className="admin-stat-grid">
+            <div className="admin-stat-card">
+              <span>Total slots</span>
+              <strong>{summary.totalSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card available-stat">
+              <span>Available</span>
+              <strong>{summary.availableSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card occupied-stat">
+              <span>Occupied</span>
+              <strong>{summary.occupiedSlots}</strong>
+            </div>
+
+            <div className="admin-stat-card reserved-stat">
+              <span>Reserved</span>
+              <strong>{summary.reservedSlots}</strong>
+            </div>
+          </div>
+
+          <div className="admin-stat-grid admin-secondary-stats">
+            <div className="admin-stat-card">
+              <span>Active sessions</span>
+              <strong>{summary.activeSessions}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Completed sessions</span>
+              <strong>{summary.completedSessions}</strong>
+            </div>
+
+            <div className="admin-stat-card">
+              <span>Occupancy rate</span>
+              <strong>{summary.occupancyRate}%</strong>
+            </div>
+          </div>
+        </>
+      )}
+
+      <section className="admin-section">
+        <h3>Parking slot information</h3>
+
+        {slots.length === 0 ? (
+          <p className="admin-empty">No parking slots found.</p>
+        ) : (
+          <div className="admin-table-wrapper">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Slot ID</th>
+                  <th>Zone</th>
+                  <th>Slot number</th>
+                  <th>Vehicle type</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {slots.map((slot) => (
+                  <tr key={slot.slotId}>
+                    <td>{slot.slotId}</td>
+                    <td>{slot.zone}</td>
+                    <td>{slot.slotNumber}</td>
+                    <td>{slot.vehicleType}</td>
+                    <td>
+                      <span
+                        className={`admin-status ${slot.status.toLowerCase()}`}
+                      >
+                        {slot.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="admin-section">
+        <h3>Recent parking transactions</h3>
+
+        {transactions.length === 0 ? (
+          <p className="admin-empty">No transactions found.</p>
+        ) : (
+          <div className="admin-table-wrapper">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Vehicle number</th>
+                  <th>Vehicle type</th>
+                  <th>Slot</th>
+                  <th>Entry time</th>
+                  <th>Exit time</th>
+                  <th>Fee</th>
+                  <th>Payment</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {transactions.map((transaction) => (
+                  <tr key={transaction.transactionId}>
+                    <td>{transaction.entryTicketNumber}</td>
+                    <td>{transaction.vehicleNumberPlate}</td>
+                    <td>{transaction.vehicleType}</td>
+                    <td>{transaction.slotId}</td>
+                    <td>
+                      {transaction.entryTime
+                        ? new Date(transaction.entryTime).toLocaleString()
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.exitTime
+                        ? new Date(transaction.exitTime).toLocaleString()
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.fee != null
+                        ? `â‚¹${transaction.fee}`
+                        : 'â€”'}
+                    </td>
+                    <td>
+                      {transaction.paymentStatus || 'Pending'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {lastUpdated && (
+        <p className="admin-last-updated">
+          Last updated: {lastUpdated.toLocaleTimeString()}
+        </p>
+      )}
+    </section>
+  );
+}
+
+
+========== client/src/style.css ==========
+/* Customer booking and cancellation */
+
+.booking-input {
+  margin: 18px 0;
+}
+
+.booking-input input {
+  margin-top: 8px;
+  margin-bottom: 5px;
+}
+
+.booking-input small {
+  display: block;
+  color: #69758b;
+  font-size: 12px;
+}
+
+.book-button,
+.cancel-button {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.book-button {
+  background: #2457d6;
+  color: white;
+}
+
+.cancel-button {
+  background: #fff0f0;
+  color: #a52626;
+}
+
+.book-button:disabled,
+.cancel-button:disabled {
+  opacity: 0.6;
+}
+
+.my-bookings {
+  margin-top: 28px;
+}
+
+.my-bookings h2 {
+  margin-bottom: 12px;
+}
+
+.booking-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid #e5eaf3;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.booking-card p {
+  margin: 5px 0;
+  font-size: 13px;
+}
+
+.booking-card small {
+  color: #69758b;
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  .booking-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
